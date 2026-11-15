@@ -73,7 +73,7 @@ export function renderHome(actions: HomeActions, opts: { prefillCode?: string; s
   };
   drawMode();
 
-  const createBtn = h('button', { class: 'btn big blue grow' }, '🃏 Create a table');
+  const createBtn = h('button', { class: 'btn big blue grow create-btn' }, '🃏 Create a table');
   createBtn.addEventListener('click', async () => {
     if (busy) return;
     sfx.unlock();

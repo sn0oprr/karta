@@ -42,6 +42,39 @@ function sphere(r: number, color: THREE.ColorRepresentation, seg = 24, outline =
   return m;
 }
 
+/** A blue café chair (shared by avatars and empty seats). */
+export function buildChair(): THREE.Group {
+  const chair = new THREE.Group();
+  const mat = toon('#2f6fc4');
+  const back = new THREE.Mesh(new THREE.BoxGeometry(3.0, 3.4, 0.3), mat);
+  back.position.set(0, -1.1, 0.95);
+  back.castShadow = true;
+  addOutline(back, 0.03);
+  const slatMat = toon('#f3efe6');
+  for (const x of [-0.75, 0, 0.75]) {
+    const slat = new THREE.Mesh(new THREE.BoxGeometry(0.32, 2.4, 0.32), slatMat);
+    slat.position.set(x, -1.05, 0.96);
+    chair.add(slat);
+  }
+  const seat = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.35, 2.6), mat);
+  seat.position.set(0, -3.0, -0.2);
+  seat.castShadow = true;
+  addOutline(seat, 0.03);
+  chair.add(back, seat);
+  for (const [x, z] of [
+    [-1.3, -1.3],
+    [1.3, -1.3],
+    [-1.3, 0.9],
+    [1.3, 0.9],
+  ] as const) {
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 2.6, 6), mat);
+    leg.position.set(x, -4.3, z);
+    leg.castShadow = true;
+    chair.add(leg);
+  }
+  return chair;
+}
+
 export class Avatar {
   readonly root = new THREE.Group();
   /** Where held cards are attached (in front of the chest). */
@@ -54,7 +87,6 @@ export class Avatar {
   private armL: THREE.Group;
   private armR: THREE.Group;
   private shirtMat: THREE.MeshToonMaterial;
-  private chairMat: THREE.MeshToonMaterial;
   private allMats: THREE.Material[] = [];
   private blinkAt = 0;
   private talk = 0;
@@ -73,35 +105,7 @@ export class Avatar {
     this.shirtMat = toon(color);
 
     // Chair (blue café chair).
-    const chair = new THREE.Group();
-    this.chairMat = toon('#2f6fc4');
-    const back = new THREE.Mesh(new THREE.BoxGeometry(3.0, 3.4, 0.3), this.chairMat);
-    back.position.set(0, -1.1, 0.95);
-    back.castShadow = true;
-    addOutline(back, 0.03);
-    const slatMat = toon('#f3efe6');
-    for (const x of [-0.75, 0, 0.75]) {
-      const slat = new THREE.Mesh(new THREE.BoxGeometry(0.32, 2.4, 0.32), slatMat);
-      slat.position.set(x, -1.05, 0.96);
-      chair.add(slat);
-    }
-    const seat = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.35, 2.6), this.chairMat);
-    seat.position.set(0, -3.0, -0.2);
-    seat.castShadow = true;
-    addOutline(seat, 0.03);
-    chair.add(back, seat);
-    for (const [x, z] of [
-      [-1.3, -1.3],
-      [1.3, -1.3],
-      [-1.3, 0.9],
-      [1.3, 0.9],
-    ] as const) {
-      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 2.6, 6), this.chairMat);
-      leg.position.set(x, -4.3, z);
-      leg.castShadow = true;
-      chair.add(leg);
-    }
-    this.root.add(chair);
+    this.root.add(buildChair());
 
     // Body.
     this.body = new THREE.Group();

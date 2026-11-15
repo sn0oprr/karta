@@ -193,19 +193,32 @@ export function prewarmCardTextures(renderer: THREE.WebGLRenderer, ids: string[]
 // ─────────────────────────────── glow ───────────────────────────────
 
 let glowTexture: THREE.CanvasTexture | null = null;
+/** Extra halo size around the card (world units). */
+const GLOW_MARGIN = 0.42;
+const GLOW_W = CARD_W + GLOW_MARGIN * 2;
+const GLOW_H = CARD_H + GLOW_MARGIN * 2;
+
 function getGlowTexture(): THREE.CanvasTexture {
   if (glowTexture) return glowTexture;
-  const W = 160;
-  const H = Math.round(W * 1.45);
+  const pxPerUnit = 140;
+  const W = Math.round(GLOW_W * pxPerUnit);
+  const H = Math.round(GLOW_H * pxPerUnit);
   const [c, ctx] = makeCanvas(W, H);
-  const pad = 26;
-  ctx.filter = 'blur(10px)';
+  const cw = CARD_W * pxPerUnit;
+  const ch = CARD_H * pxPerUnit;
+  const x = (W - cw) / 2;
+  const y = (H - ch) / 2;
+  const r = CARD_CORNER * CARD_W * pxPerUnit;
+  // A soft halo hugging the card outline (shadowBlur works in every browser, unlike ctx.filter).
+  ctx.shadowColor = 'rgba(255,255,255,1)';
   ctx.fillStyle = 'white';
-  const r = 18;
-  ctx.beginPath();
-  ctx.roundRect(pad, pad, W - pad * 2, H - pad * 2, r);
-  ctx.fill();
-  ctx.filter = 'none';
+  const grow = 9;
+  for (const blur of [40, 26, 14]) {
+    ctx.shadowBlur = blur;
+    ctx.beginPath();
+    ctx.roundRect(x - grow, y - grow, cw + grow * 2, ch + grow * 2, r + grow);
+    ctx.fill();
+  }
   glowTexture = new THREE.CanvasTexture(c);
   glowTexture.colorSpace = THREE.SRGBColorSpace;
   return glowTexture;
@@ -231,15 +244,15 @@ export class CardObject {
 
     this.glowMat = new THREE.MeshBasicMaterial({
       map: getGlowTexture(),
-      color: '#ffd84d',
+      color: '#ffc928',
       transparent: true,
       opacity: 0,
       depthWrite: false,
-      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+      toneMapped: false,
     });
-    this.glow = new THREE.Mesh(new THREE.PlaneGeometry(CARD_W * 1.55, CARD_H * 1.42), this.glowMat);
-    this.glow.position.z = -CARD_T / 2 - 0.004;
-    this.glow.rotation.y = Math.PI;
+    this.glow = new THREE.Mesh(new THREE.PlaneGeometry(GLOW_W, GLOW_H), this.glowMat);
+    this.glow.position.z = -CARD_T / 2 - 0.003;
     this.glow.visible = false;
     this.glow.raycast = () => {};
     this.glow.renderOrder = 2;
@@ -264,10 +277,9 @@ export class CardObject {
     return this.glowMat.opacity;
   }
 
-  /** Puts the halo on the other side (for face-down cards). */
+  /** Puts the halo on the front side (for face-down cards, so it sits underneath them). */
   glowOnFront(front: boolean) {
-    this.glow.position.z = front ? CARD_T / 2 + 0.004 : -CARD_T / 2 - 0.004;
-    this.glow.rotation.y = front ? 0 : Math.PI;
+    this.glow.position.z = front ? CARD_T / 2 + 0.003 : -CARD_T / 2 - 0.003;
   }
 
   setShadows(cast: boolean) {

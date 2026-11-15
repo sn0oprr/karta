@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { type Card, parseCard } from '../../shared/cards';
 import { type Move, captureOptions } from '../../shared/chkobba';
 import { AVATAR_COLORS, type GameEvent, type PlayerInfo, type RoomMessage, type RoomView } from '../../shared/protocol';
-import { Avatar } from './avatar';
+import { Avatar, buildChair } from './avatar';
 import { CARD_H, CARD_T, CardObject, CardStack } from './cardMesh';
 import { Confetti, Shockwave } from './fx';
 import {
@@ -63,6 +63,7 @@ export class Board {
   // ── objects ──
   private avatars: (Avatar | null)[] = [];
   private avatarKeys: (string | null)[] = [];
+  private chairs: (THREE.Group | null)[] = [];
   private handGroup = new THREE.Group();
   private myHand: CardObject[] = [];
   private held: CardObject[][] = [];
@@ -135,15 +136,67 @@ export class Board {
     if (!this.processing) void this.processQueue();
   }
 
-  /** Home screen: slow orbit around an idle table. */
+  /** Home screen: slow orbit around a table where four friends are mid-game. */
   showMenu() {
     this.room = null;
     this.queue = [];
     this.clearAll();
     this.syncAvatars(null);
-    this.showDecorativeDeck();
+    this.setupMenuScene();
     this.setCamera('menu');
   }
+
+  private setupMenuScene() {
+    const n = 4;
+    this.n = n;
+    this.baseSeat = 0;
+    this.mySeat = null;
+    const palette = [0, 5, 2, 3];
+    for (let s = 0; s < n; s++) {
+      const av = new Avatar(`menu-guest-${s * 7 + 3}`, AVATAR_COLORS[palette[s]!]!);
+      av.root.position.copy(avatarPosition(s, n));
+      av.root.rotation.y = viewYaw(s, n);
+      av.root.scale.setScalar(AVATAR_SCALE);
+      av.lookAt(new THREE.Vector3(0, 0, 0));
+      this.group.add(av.root);
+      this.avatars[s] = av;
+      this.avatarKeys[s] = `menu-${s}`;
+      this.held[s] = [];
+      for (let i = 0; i < 3; i++) {
+        const c = this.take(null);
+        c.role = 'held';
+        av.handAnchor.add(c.root);
+        this.held[s]!.push(c);
+      }
+      this.layoutHeld(s, false);
+    }
+    ['7D', '10H', '3C', '1S', '9D'].forEach((id, i) => {
+      const c = this.take(id);
+      c.role = 'table';
+      this.group.add(c.root);
+      this.tableCards.set(id, c);
+      this.slotOf.set(id, i);
+      const t = this.tableTransform(i);
+      c.root.position.copy(t.pos);
+      c.root.quaternion.copy(t.quat);
+    });
+    this.deck.root.position.copy(deckPosition(1, n));
+    this.deck.root.rotation.y = DECK_YAW;
+    this.deck.setCount(16);
+    for (let s = 0; s < n; s++) {
+      this.piles[s] ??= (() => {
+        const p = new CardStack();
+        this.group.add(p.root);
+        return p;
+      })();
+      this.piles[s]!.root.position.copy(pilePosition(s, n));
+      this.piles[s]!.root.rotation.y = viewYaw(s, n) + 0.12;
+      this.piles[s]!.setCount([5, 9, 3, 7][s]!);
+    }
+    this.menuCheer = 0;
+  }
+
+  private menuCheer = 0;
 
   /** Spectators can rotate around the table. */
   rotateSpectatorView(step: number) {
@@ -273,6 +326,22 @@ export class Board {
           this.held[s] = [];
         }
       }
+      // Empty seats show an empty chair waiting for a friend.
+      const wantChair = !!room && s < n && !player && s !== room.you.seat;
+      if (wantChair && !this.chairs[s]) {
+        const chair = buildChair();
+        chair.scale.setScalar(AVATAR_SCALE);
+        this.group.add(chair);
+        this.chairs[s] = chair;
+      } else if (!wantChair && this.chairs[s]) {
+        this.chairs[s]!.removeFromParent();
+        this.chairs[s] = null;
+      }
+      if (wantChair) {
+        const v = this.viewOf(s);
+        this.chairs[s]!.position.copy(avatarPosition(v, n));
+        this.chairs[s]!.rotation.y = viewYaw(v, n);
+      }
       if (visible && player) {
         if (!av) {
           av = new Avatar(player.id, AVATAR_COLORS[player.color] ?? AVATAR_COLORS[0]);
@@ -289,6 +358,8 @@ export class Board {
       }
     }
     this.avatars.length = Math.max(n, 0);
+    for (let s = n; s < this.chairs.length; s++) this.chairs[s]?.removeFromParent();
+    this.chairs.length = Math.max(n, 0);
   }
 
   // ═══════════════════════════════ cards ═══════════════════════════════
@@ -344,7 +415,7 @@ export class Board {
 
   private tableTransform(slot: number) {
     const s = TABLE_SLOTS[Math.min(slot, TABLE_SLOTS.length - 1)]!;
-    return { pos: s.pos.clone().setY(CARD_T / 2 + 0.002), quat: flatQuat(s.yaw, true) };
+    return { pos: s.pos.clone().setY(CARD_T / 2 + 0.018), quat: flatQuat(s.yaw, true) };
   }
 
   private syncCards(room: RoomView, relayout: boolean) {
@@ -428,6 +499,7 @@ export class Board {
     // Piles and chkobba markers.
     for (let s = 0; s < this.n; s++) {
       this.piles[s]!.setCount(g.pileCounts[s] ?? 0);
+      this.piles[s]!.root.position.y = this.pileBaseY((g.chkobbaCards[s] ?? []).length);
       const want = g.chkobbaCards[s] ?? [];
       const list = this.markers[s] ?? (this.markers[s] = []);
       while (list.length > want.length) this.release(list.pop()!);
@@ -454,12 +526,17 @@ export class Board {
     void relayout;
   }
 
+  /** Piles sit on top of their chkobba markers (face-up cards slid crosswise underneath). */
+  private pileBaseY(markers: number): number {
+    return markers > 0 ? markers * (CARD_T + 0.003) + 0.004 : 0;
+  }
+
   private markerTransform(seat: number, i: number) {
     const v = this.viewOf(seat);
     const pile = pilePosition(v, this.n);
     const yaw = viewYaw(v, this.n) + Math.PI / 2 + 0.1 + i * 0.12;
     const out = viewDir(v, this.n).multiplyScalar(-0.15 - i * 0.12);
-    return { pos: pile.clone().add(out).setY(0.004 + i * 0.002), quat: flatQuat(yaw, true) };
+    return { pos: pile.clone().add(out).setY(CARD_T / 2 + 0.004 + i * (CARD_T + 0.003)), quat: flatQuat(yaw, true) };
   }
 
   private handTransform(i: number, count: number) {
@@ -790,8 +867,8 @@ export class Board {
       duration: 480,
       arc: 1.6,
     });
-    for (const t of targets) t.setGlow(0.95, '#ffd84d');
-    c.setGlow(0.95, '#ffd84d');
+    for (const t of targets) t.setGlow(1, '#ffc928');
+    c.setGlow(1, '#ffc928');
     this.cb.sfx('capture');
     await wait(260);
 
@@ -825,6 +902,7 @@ export class Board {
         obj.role = 'marker';
         return moveObject(obj.root, { position: t.pos, quaternion: t.quat, duration: 480, delay: i * 70, arc: 1.0 }).then(() => {
           pile.setCount(pile.count + 1);
+          pile.root.position.y = this.pileBaseY(this.markers[seat]?.length ?? 0);
         });
       }
       return moveObject(obj.root, {
@@ -892,8 +970,10 @@ export class Board {
     const aspect = this.stage.width / Math.max(1, this.stage.height);
     const portrait = aspect < 0.8;
     const square = !portrait && aspect < 1.25;
+    const spectating = this.mySeat === null;
     const fov = portrait ? 54 : square ? 44 : 38;
-    const pitch = THREE.MathUtils.degToRad(portrait ? 66 : square ? 60 : 57);
+    // Spectators look from higher up, over the near player's head.
+    const pitch = THREE.MathUtils.degToRad((portrait ? 66 : square ? 60 : 57) + (spectating ? 9 : 0));
     const target = new THREE.Vector3(0, 0, portrait ? 1.3 : 0.55);
     const dir = new THREE.Vector3(0, Math.sin(pitch), Math.cos(pitch));
     // [point, minNdcY, maxNdcY, maxAbsNdcX]
@@ -911,7 +991,8 @@ export class Board {
       // Side opponents may be cut a little on narrow screens; the far one may reach the top edge.
       pts.push([head, -1, side ? 0.8 : 0.93, portrait && side ? 1.4 : 0.97]);
     }
-    pts.push([new THREE.Vector3(0, 0, 2.3), portrait ? -0.36 : -0.42, 1, 1]);
+    if (spectating) pts.push([new THREE.Vector3(0, 0, FELT_RADIUS), -0.7, 1, 1]);
+    else pts.push([new THREE.Vector3(0, 0, 2.3), portrait ? -0.36 : -0.42, 1, 1]);
     const cam = new THREE.PerspectiveCamera(fov, aspect, 0.1, 400);
     const fits = (dist: number) => {
       cam.position.copy(target).addScaledVector(dir, dist);
@@ -949,6 +1030,13 @@ export class Board {
 
   private update(dt: number, time: number) {
     if (this.cameraMode === 'menu') {
+      this.menuCheer += dt;
+      if (this.menuCheer > 6 && !this.room) {
+        this.menuCheer = 0;
+        const s = Math.floor(Math.random() * 4);
+        if (Math.random() < 0.5) this.avatars[s]?.celebrate();
+        else this.avatars[s]?.nod();
+      }
       this.menuAngle += dt * 0.06;
       const r = 20;
       this.camPos.set(Math.sin(this.menuAngle) * r, 7.5, Math.cos(this.menuAngle) * r);
@@ -970,7 +1058,7 @@ export class Board {
       m.opacity = 0.55 + Math.sin(time * 4) * 0.35;
     }
     // Gentle pulse on capture previews.
-    const pulse = 0.55 + Math.sin(time * 6) * 0.25;
+    const pulse = 0.72 + Math.sin(time * 6) * 0.25;
     for (const id of this.previewIds) this.tableCards.get(id)?.setGlow(pulse);
     if (this.pointerInside) this.updateHover();
   }
@@ -995,7 +1083,7 @@ export class Board {
     const active = this.canAct();
     for (const c of this.myHand) {
       if (c === this.selected) continue;
-      c.setGlow(active ? 0.35 : 0, '#fff3b0');
+      c.setGlow(active ? 0.5 : 0, '#ffe27a');
     }
   }
 
@@ -1066,7 +1154,7 @@ export class Board {
     const opts = captureOptions(parseCard(c.cardId), this.room.game.table);
     if (opts.length === 1) for (const x of opts[0]!) this.previewIds.add(x.id);
     else if (opts.length > 1) for (const o of opts) for (const x of o) this.previewIds.add(x.id);
-    for (const id of this.previewIds) this.tableCards.get(id)?.setGlow(0.7, opts.length === 1 ? '#ffd84d' : '#9be7ff');
+    for (const id of this.previewIds) this.tableCards.get(id)?.setGlow(0.85, opts.length === 1 ? '#ffc928' : '#7fe0ff');
   }
 
   private select(c: CardObject) {
@@ -1077,7 +1165,7 @@ export class Board {
     if (this.selected && this.selected !== c) this.handLift.set(this.selected, 0);
     this.selected = c;
     this.handLift.set(c, 1);
-    c.setGlow(0.9, '#ffd84d');
+    c.setGlow(1, '#ffc928');
     this.cb.sfx('select');
     this.layoutHand(true, 180);
     this.showPreview(c);
@@ -1179,7 +1267,7 @@ export class Board {
     if (!ids) return;
     for (const id of ids) {
       this.previewIds.add(id);
-      this.tableCards.get(id)?.setGlow(0.9, '#ffd84d');
+      this.tableCards.get(id)?.setGlow(1, '#ffc928');
     }
   }
 

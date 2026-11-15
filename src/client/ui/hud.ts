@@ -39,10 +39,12 @@ export class Hud {
   private soundBtn: HTMLButtonElement;
   private spectatorBar = h('div', { class: 'spectator-bar hidden' });
   private lastScores: [number, number] = [0, 0];
+  private seatMenuOpen = false;
   private lastTurnKey = '';
   private code = '';
 
   constructor(private readonly actions: HudActions) {
+    setInterval(() => this.tickCountdown(), 250);
     this.codeChip.addEventListener('click', async () => {
       if (await copyText(`${location.origin}/room/${this.code}`)) toast('Invite link copied!');
     });
@@ -97,6 +99,16 @@ export class Hud {
       h('div', { class: 'dock' }, this.micBtn, this.voiceBtn),
     );
     this.el = h('div', { class: 'hud' }, top, this.banner, bottom, this.spectatorBar);
+  }
+
+  private bannerText = '';
+  private deadline: number | null = null;
+
+  private tickCountdown() {
+    if (this.deadline === null) return;
+    const left = Math.max(0, Math.ceil((this.deadline - Date.now()) / 1000));
+    this.banner.textContent = `${this.bannerText}  ⏱ ${left}s`;
+    this.banner.classList.toggle('urgent', left <= 5);
   }
 
   setUnread(n: number) {
@@ -157,23 +169,59 @@ export class Hud {
     const key = `${text}|${mine}`;
     if (key !== this.lastTurnKey) {
       this.lastTurnKey = key;
+      this.bannerText = text;
       this.banner.textContent = text;
       this.banner.classList.toggle('mine', mine);
       this.banner.classList.toggle('hidden-soft', !text);
     }
+    this.deadline = mine && g?.turnDeadline ? g.turnDeadline + (Date.now() - room.serverTime) : null;
+    this.tickCountdown();
 
     // Spectator controls.
     if (my === null && room.phase !== 'lobby') {
+      this.banner.classList.add('hidden-soft');
       const takeable = room.seats
         .map((p, i) => ({ p, i }))
         .filter(({ p }) => p && (p.bot || !p.connected || p.autopilot));
+      const menu = h(
+        'div',
+        { class: `panel seat-menu ${this.seatMenuOpen ? '' : 'hidden'}` },
+        h('div', { class: 'label' }, 'Take over a seat'),
+        ...takeable.map(({ p, i }) =>
+          h(
+            'button',
+            {
+              class: 'btn small ghost',
+              onclick: () => {
+                this.seatMenuOpen = false;
+                this.actions.takeSeat(i);
+              },
+            },
+            `${p!.bot ? '🤖' : '💤'} ${p!.name}`,
+          ),
+        ),
+      );
       this.spectatorBar.replaceChildren(
         h('button', { class: 'btn small ghost icon-btn', title: 'Rotate view', onclick: () => this.actions.rotateView(-1) }, '⟲'),
         h('span', { class: 'chip' }, '👀 Spectating'),
         h('button', { class: 'btn small ghost icon-btn', title: 'Rotate view', onclick: () => this.actions.rotateView(1) }, '⟳'),
-        ...takeable.map(({ p, i }) =>
-          h('button', { class: 'btn small', title: 'Take over this seat', onclick: () => this.actions.takeSeat(i) }, `Play for ${p!.name}`),
-        ),
+        ...(takeable.length
+          ? [
+              h(
+                'button',
+                {
+                  class: 'btn small',
+                  title: 'Play instead of a bot or an away player',
+                  onclick: () => {
+                    this.seatMenuOpen = !this.seatMenuOpen;
+                    menu.classList.toggle('hidden', !this.seatMenuOpen);
+                  },
+                },
+                '🪑 Take a seat',
+              ),
+            ]
+          : []),
+        menu,
       );
       this.spectatorBar.classList.remove('hidden');
     } else this.spectatorBar.classList.add('hidden');

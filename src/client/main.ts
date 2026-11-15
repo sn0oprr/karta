@@ -11,10 +11,11 @@ import { prewarmCardTextures, setMaxAnisotropy } from './game3d/cardMesh';
 import { Environment } from './game3d/environment';
 import { Stage } from './game3d/stage';
 import { Table } from './game3d/table';
+import { animator } from './game3d/tween';
 import { profile, saveProfile } from './identity';
 import { Net } from './net';
 import { sfx } from './sfx';
-import { h, toast } from './ui/dom';
+import { h, modal, toast } from './ui/dom';
 import { renderHome } from './ui/home';
 import { Hud } from './ui/hud';
 import { Lobby } from './ui/lobby';
@@ -139,6 +140,16 @@ class App {
     this.roomLayer.append(this.tags.el, this.hud.el, this.lobby.el, this.chat.el, this.emotes.el, this.voicePanel.el);
 
     this.bindNet();
+    // The render loop pauses in background tabs: finish animations instantly there so the
+    // game state (and the "your turn" alert) keeps flowing.
+    const syncSpeed = () => {
+      if (document.hidden) {
+        animator.speed = 0;
+        animator.finishAll();
+      } else animator.speed = 1;
+    };
+    document.addEventListener('visibilitychange', syncSpeed);
+    syncSpeed();
     window.addEventListener('pointerdown', () => sfx.unlock(), { capture: true });
     window.addEventListener('popstate', () => this.route());
     this.stage.start();
@@ -193,7 +204,10 @@ class App {
     // Meta (lobby, voice, tags) reacts immediately; the board animates game events in order.
     this.voice.sync(m.room);
     this.voicePanel.update(m.room);
-    if (m.room.phase === 'lobby') this.lobby.update(m.room);
+    const inLobby = m.room.phase === 'lobby';
+    this.lobby.el.classList.toggle('hidden', !inLobby);
+    if (inLobby) this.lobby.update(m.room);
+    else if (this.screen === 'room') this.hud.el.classList.remove('in-lobby');
     this.board.push(m);
     if (this.displayed) {
       // Keep connection/voice indicators fresh even while animations are running.
@@ -205,8 +219,8 @@ class App {
     const prevPhase = this.displayed?.phase;
     this.displayed = room;
     this.tags.update({ ...room, seats: this.room?.seats ?? room.seats, voice: this.room?.voice ?? room.voice });
-    const inLobby = room.phase === 'lobby';
-    this.lobby.el.classList.toggle('hidden', !inLobby);
+    const inLobby = room.phase === 'lobby' && this.room?.phase === 'lobby';
+    this.lobby.el.classList.toggle('hidden', this.room?.phase !== 'lobby');
     this.hud.el.classList.toggle('in-lobby', inLobby);
     for (const el of this.hud.el.querySelectorAll<HTMLElement>('.scoreboard, .turn-banner')) el.classList.toggle('hidden', inLobby);
     if (inLobby) this.lobby.update(this.room ?? room);
@@ -337,6 +351,41 @@ class App {
 
   private leaveRoom() {
     sfx.play('click');
+    const room = this.room;
+    const seated = room && room.you.seat !== null;
+    const inGame = room && (room.phase === 'playing' || room.phase === 'roundOver');
+    if (seated && inGame) {
+      const body = h(
+        'div',
+        null,
+        h('h2', null, 'Leave the table?'),
+        h('p', { style: 'text-align:center' }, 'A bot will take your seat so the others can keep playing. You can come back with the link and watch, or take a seat again.'),
+      );
+      const m = modal(body);
+      body.append(
+        h(
+          'div',
+          { class: 'modal-actions' },
+          h('button', { class: 'btn', onclick: () => m.close() }, 'Stay'),
+          h(
+            'button',
+            {
+              class: 'btn coral',
+              onclick: () => {
+                m.close();
+                this.doLeave();
+              },
+            },
+            'Leave',
+          ),
+        ),
+      );
+      return;
+    }
+    this.doLeave();
+  }
+
+  private doLeave() {
     this.net.socket.emit('leave');
     this.roomCode = null;
     this.goHome();

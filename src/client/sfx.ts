@@ -127,6 +127,8 @@ class Sfx {
 
   play(name: Sound) {
     if (!this.ctx || !this.master || this.muted) return;
+    // Background tabs fast-forward animations: only keep the sounds that call you back.
+    if (document.hidden && name !== 'myTurn' && name !== 'message' && name !== 'win' && name !== 'lose') return;
     const nowMs = performance.now();
     const minGap = name === 'deal' ? 35 : name === 'hover' ? 60 : 20;
     if (nowMs - (this.lastPlayed.get(name) ?? 0) < minGap) return;

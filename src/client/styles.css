@@ -393,10 +393,33 @@ select {
 
 .code-field {
   text-transform: uppercase;
-  letter-spacing: 0.3em;
+  letter-spacing: 0.22em;
   font-family: var(--font-title);
   text-align: center;
-  font-size: 1.4rem;
+  font-size: 1.35rem;
+  min-width: 0;
+}
+
+.create-btn {
+  min-width: 210px;
+}
+
+@media (max-width: 420px) {
+  .code-field {
+    letter-spacing: 0.08em;
+    font-size: 1.15rem;
+    padding-left: 0.4em;
+    padding-right: 0.4em;
+  }
+
+  .home-card .btn.big {
+    font-size: 1.15rem;
+  }
+
+  .swatch {
+    width: 30px;
+    height: 30px;
+  }
 }
 
 .home-links {
@@ -739,6 +762,10 @@ select {
   animation: wiggle 1.8s ease-in-out infinite;
 }
 
+.turn-banner.mine.urgent {
+  background: #ffb4b4;
+}
+
 .turn-banner.hidden-soft {
   opacity: 0;
   transform: translateX(-50%) translateY(-10px);
@@ -791,6 +818,28 @@ select {
   display: flex;
   gap: 8px;
   align-items: center;
+  white-space: nowrap;
+}
+
+.seat-menu {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  right: 0;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 180px;
+}
+
+@media (max-width: 720px) {
+  .spectator-bar {
+    bottom: calc(20% + var(--safe-bottom));
+  }
+
+  .spectator-bar .chip {
+    display: none;
+  }
 }
 
 /* ───────────────────────────── seat tags ───────────────────────────── */
