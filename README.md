@@ -49,6 +49,7 @@ docker compose up -d --build     # http://localhost:3000 (KARTA_BIND=127.0.0.1:3
 Production runs at https://karta.gamez.tn on `radyou.tn`: the repo is cloned in `/opt/games/karta` (read-only
 deploy key, ssh alias `github-karta`), `~/bin/deploy-karta.sh` fast-forwards it to `origin/main` and rebuilds the
 container (compose project `karta`) on `127.0.0.1:3510`, and the host Caddy proxies `karta.gamez.tn` to it.
+Every push to `main` (except docs-only changes) runs that script through `.github/workflows/deploy.yml`.
 
 ## Deploying
 
