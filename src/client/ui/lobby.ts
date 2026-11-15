@@ -41,24 +41,37 @@ export async function shareRoom(code: string) {
   else toast(url);
 }
 
-export function avatarDot(p: PlayerInfo | null, size = 34): HTMLElement {
+/** A player's round badge: their character's portrait when available, else initials. */
+export function avatarDot(p: PlayerInfo | null, size = 34, portrait: string | null = null): HTMLElement {
   return h(
     'span',
     {
-      class: 'avatar-dot',
+      class: `avatar-dot ${portrait ? 'portrait' : ''}`,
       style: { background: p ? (AVATAR_COLORS[p.color] ?? '#ccc') : 'transparent', width: `${size}px`, height: `${size}px` },
     },
-    p ? (p.bot ? '🤖' : initials(p.name)) : '',
+    portrait ? h('img', { src: portrait, alt: '' }) : p ? (p.bot ? '🤖' : initials(p.name)) : '',
   );
+}
+
+export interface LobbyParts {
+  /** The café order card (kept alive across updates). */
+  cafe: HTMLElement;
+  /** Portrait image of a player's character, if one can be drawn. */
+  portrait: (p: PlayerInfo) => string | null;
 }
 
 export class Lobby {
   readonly el: HTMLElement;
   private body: HTMLElement;
+  private cafeCard: HTMLElement;
 
   private footer: HTMLElement;
 
-  constructor(private readonly actions: LobbyActions) {
+  constructor(
+    private readonly actions: LobbyActions,
+    private readonly parts: LobbyParts,
+  ) {
+    this.cafeCard = h('div', { class: 'panel cafe-card' }, h('div', { class: 'label' }, '☕ At the café'));
     this.body = h('div', { class: 'lobby-scroll' });
     this.footer = h('div', { class: 'lobby-footer' });
     this.el = h('div', { class: 'lobby' }, this.body, this.footer);
@@ -141,7 +154,7 @@ export class Lobby {
       return h(
         'div',
         { class: `seat ${p ? '' : 'empty'} ${isMe ? 'me' : ''}` },
-        avatarDot(p),
+        avatarDot(p, 40, p ? this.parts.portrait(p) : null),
         h(
           'div',
           { class: 'grow', style: 'flex:1;min-width:0' },
@@ -179,7 +192,7 @@ export class Lobby {
             'div',
             { class: 'spectators' },
             ...room.spectators.map((p) =>
-              h('span', { class: 'chip' }, avatarDot(p, 20), p.name, p.id === me ? h('span', { class: 'badge' }, 'you') : null),
+              h('span', { class: 'chip' }, avatarDot(p, 22, this.parts.portrait(p)), p.name, p.id === me ? h('span', { class: 'badge' }, 'you') : null),
             ),
           ),
         )
@@ -260,8 +273,10 @@ export class Lobby {
       startBtn,
     );
 
+    // The café card is the same element every time (its live preview keeps running).
+    if (this.parts.cafe.parentElement !== this.cafeCard) this.cafeCard.appendChild(this.parts.cafe);
     const scroll = this.body.scrollTop;
-    this.body.replaceChildren(codeCard, seatsCard, settingsCard);
+    this.body.replaceChildren(codeCard, seatsCard, this.cafeCard, settingsCard);
     this.body.scrollTop = scroll;
     this.footer.replaceChildren(actionsRow);
   }

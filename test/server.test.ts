@@ -1,16 +1,19 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { io as ioClient, type Socket } from 'socket.io-client';
 import { legalMovesFor } from '../src/shared/chkobba';
-import type {
-  ChatMessage,
-  ClientToServer,
-  GameEvent,
-  RoomView,
-  ServerToClient,
-  Welcome,
+import {
+  type ChatMessage,
+  type ClientToServer,
+  type GameEvent,
+  type RoomView,
+  type ServerToClient,
+  type Welcome,
+  isCharacter,
+  isDrink,
+  isSkin,
 } from '../src/shared/protocol';
 import { type KartaServer, startServer } from '../src/server/index';
-import { TIMING } from '../src/server/room';
+import { SIP_TIMING, TIMING } from '../src/server/room';
 
 type ClientSocket = Socket<ServerToClient, ClientToServer>;
 
@@ -20,17 +23,22 @@ class TestClient {
   events: GameEvent[] = [];
   chats: ChatMessage[] = [];
   emotes: { from: string; id: string }[] = [];
+  sips: string[] = [];
   signals: { from: string; data: unknown }[] = [];
   left: string | null = null;
   welcome: Welcome | null = null;
   private listeners = new Set<() => void>();
 
-  constructor(url: string, readonly secret: string, readonly name: string) {
+  constructor(url: string, readonly secret: string, readonly name: string, look: Record<string, unknown> = {}) {
     this.socket = ioClient(url, {
-      auth: { secret, name, color: 1 },
+      auth: { secret, name, color: 1, ...look },
       transports: ['websocket'],
       forceNew: true,
       reconnection: false,
+    });
+    this.socket.on('sip', (p) => {
+      this.sips.push(p.from);
+      this.notify();
     });
     this.socket.on('welcome', (w) => {
       this.welcome = w;
@@ -101,8 +109,8 @@ class TestClient {
 let server: KartaServer;
 let url: string;
 const clients: TestClient[] = [];
-const client = (secret: string, name: string) => {
-  const c = new TestClient(url, secret.padEnd(24, 'x'), name);
+const client = (secret: string, name: string, look?: Record<string, unknown>) => {
+  const c = new TestClient(url, secret.padEnd(24, 'x'), name, look);
   clients.push(c);
   return c;
 };
@@ -310,5 +318,70 @@ describe('server', () => {
     expect(await host.call('kick', { playerId: p.room!.you.id })).toEqual({ ok: true });
     await p.waitFor(() => p.left === 'kicked', 4000, 'kicked');
     expect((await p.call('join', { code })).ok).toBe(false);
+  });
+
+  it('shares characters and drinks, and relays sips to the rest of the table', async () => {
+    const a = client('lina-secret', 'Lina', { character: 'hajj', skin: 2, drink: 'chicha' });
+    const b = client('omar-secret', 'Omar'); // an older client: no look in the handshake
+    const spec = client('pia-secret', 'Pia', { character: 'nejma', skin: 1, drink: 'tea' });
+    const code = (await a.call<{ ok: boolean; code: string }>('create', {})).code;
+    expect(await b.call('join', { code })).toMatchObject({ ok: true });
+    expect(await spec.call('join', { code, spectate: true })).toMatchObject({ ok: true });
+    await a.waitFor(() => a.room?.seats[1] && a.room.spectators.length === 1, 4000, 'everyone in');
+    const aId = a.room!.you.id;
+    const bId = b.room!.you.id;
+    const specId = spec.room!.you.id;
+
+    expect(a.room!.seats[0]).toMatchObject({ character: 'hajj', skin: 2, drink: 'chicha' });
+    expect(a.room!.spectators[0]).toMatchObject({ character: 'nejma', skin: 1, drink: 'tea' });
+    // Without a look, players still get a valid one.
+    const omar = a.room!.seats[1]!;
+    expect(isCharacter(omar.character) && isSkin(omar.skin) && isDrink(omar.drink)).toBe(true);
+
+    // Profile changes reach the table; invalid fields are ignored.
+    let version = a.room!.version;
+    b.socket.emit('profile', { name: 'Omar', color: 1, character: 'nejma', skin: 4, drink: 'coke' });
+    await a.waitFor(() => a.room!.version > version, 4000, 'new order');
+    expect(a.room!.seats[1]).toMatchObject({ character: 'nejma', skin: 4, drink: 'coke' });
+    version = a.room!.version;
+    b.socket.emit('profile', { name: 'Omar', character: 'dragon', skin: 99, drink: 'whisky', color: -3 } as never);
+    await a.waitFor(() => a.room!.version > version, 4000, 'profile broadcast');
+    expect(a.room!.seats[1]).toMatchObject({ character: 'nejma', skin: 4, drink: 'coke' });
+
+    // A sip reaches everyone else, not the sipper; a second sip right away is dropped.
+    a.socket.emit('sip');
+    a.socket.emit('sip');
+    a.socket.emit('chat', { text: 'after the sips' });
+    await b.waitFor(() => b.chats.find((m) => m.text === 'after the sips'), 4000, 'chat after sips');
+    await spec.waitFor(() => spec.chats.find((m) => m.text === 'after the sips'), 4000, 'spectator chat');
+    expect(b.sips.filter((id) => id === aId)).toHaveLength(1);
+    expect(spec.sips.filter((id) => id === aId)).toHaveLength(1);
+    expect(a.sips).not.toContain(aId);
+
+    // Spectators have no seat at the table, so no drink to sip.
+    spec.socket.emit('sip');
+    spec.socket.emit('chat', { text: 'watching' });
+    await a.waitFor(() => a.chats.find((m) => m.text === 'watching'), 4000, 'spectator chat');
+    expect(a.sips).not.toContain(specId);
+
+    b.socket.emit('sip');
+    await a.waitFor(() => a.sips.includes(bId), 4000, 'sip from Omar');
+  });
+
+  it('lets bots sip their drinks now and then', async () => {
+    const saved = { ...SIP_TIMING };
+    SIP_TIMING.botTick = 30;
+    SIP_TIMING.botChance = 1;
+    try {
+      const host = client('quinn-secret', 'Quinn');
+      await host.call('create', {});
+      await host.waitFor(() => host.room, 4000, 'room');
+      expect(await host.call('addBot', { seat: 1 })).toEqual({ ok: true });
+      const bot = await host.waitFor(() => host.room!.seats[1], 4000, 'bot seated');
+      expect(isCharacter(bot.character) && isSkin(bot.skin) && isDrink(bot.drink)).toBe(true);
+      await host.waitFor(() => host.sips.includes(bot.id), 4000, 'bot sip');
+    } finally {
+      Object.assign(SIP_TIMING, saved);
+    }
   });
 });

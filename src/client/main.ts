@@ -4,17 +4,20 @@ import '@fontsource/fredoka/600.css';
 import '@fontsource/fredoka/700.css';
 import './styles.css';
 import { makeDeck } from '../shared/cards';
-import { type GameMode, type RoomMessage, type RoomView, normalizeRoomCode } from '../shared/protocol';
+import { DRINKS, type DrinkId, type GameMode, type RoomMessage, type RoomView, normalizeRoomCode } from '../shared/protocol';
+import { drinkAudio } from './drinkAudio';
 import { Board, type SfxName } from './game3d/board';
 import { ensureCardFonts } from './game3d/cardArt';
 import { prewarmCardTextures, setMaxAnisotropy } from './game3d/cardMesh';
 import { Environment } from './game3d/environment';
+import { PortraitStudio } from './game3d/portrait';
 import { Stage } from './game3d/stage';
 import { Table } from './game3d/table';
 import { animator } from './game3d/tween';
 import { profile, saveProfile } from './identity';
 import { Net } from './net';
 import { sfx } from './sfx';
+import { CafePicker } from './ui/cafe';
 import { h, modal, toast } from './ui/dom';
 import { renderHome } from './ui/home';
 import { Hud } from './ui/hud';
@@ -26,6 +29,8 @@ import { VoiceChat } from './voice';
 
 const uiRoot = document.getElementById('ui')!;
 const stageEl = document.getElementById('stage')!;
+
+const drinkInfo = (id: DrinkId) => DRINKS.find((d) => d.id === id) ?? DRINKS[0];
 
 function routeCode(): { code: string | null; spectate: boolean } {
   const m = location.pathname.match(/^\/room\/([A-Za-z0-9]{5})\/?$/);
@@ -46,6 +51,11 @@ class App {
   emotes: EmotePicker;
   voicePanel: VoicePanel;
   results: ResultsView;
+  studio = new PortraitStudio();
+  cafe: CafePicker;
+  /** In-game pop-up holding the café picker (the lobby shows it inline). */
+  private cafePop: HTMLElement;
+  private cafeSlot = h('div');
 
   /** Latest room state from the server. */
   room: RoomView | null = null;
@@ -76,8 +86,33 @@ class App {
       onDisplayed: (room) => this.onDisplayed(room),
       sfx: (name: SfxName) => sfx.play(name),
       onInvalid: (reason) => toast(reason),
+      onSip: () => {
+        sfx.unlock();
+        this.net.socket.emit('sip');
+      },
+      drinkSound: (drink, pan) => drinkAudio.play(drink, { pan }),
     });
-    this.stage.onFrame((_dt, t) => {
+    this.studio.sound = (drink) => drinkAudio.play(drink);
+    this.cafe = new CafePicker(this.studio, (patch) => {
+      saveProfile(patch);
+      this.net.updateProfile();
+      this.cafe.render();
+      this.hud.setDrink(drinkInfo(profile.drink).icon);
+      drinkAudio.prefetch(profile.drink);
+    });
+    this.cafePop = h(
+      'div',
+      { class: 'panel cafe-pop hidden' },
+      h(
+        'div',
+        { class: 'row', style: 'justify-content:space-between' },
+        h('div', { class: 'label', style: 'margin:0' }, '☕ At the café'),
+        h('button', { class: 'btn small ghost icon-btn', title: 'Close', onclick: () => this.toggleCafe(false) }, '✕'),
+      ),
+      this.cafeSlot,
+    );
+    this.stage.onFrame((dt, t) => {
+      this.studio.frame(dt, t);
       this.env.update(t);
       this.voice.updateLevels();
       this.tags.levels = this.voice.levels;
@@ -103,11 +138,19 @@ class App {
       rules: () => showRules(),
       toggleChat: () => {
         this.emotes.toggle(false);
+        this.toggleCafe(false);
         this.chat.toggle();
       },
       toggleEmotes: () => {
         this.chat.toggle(false);
+        this.toggleCafe(false);
         this.emotes.toggle();
+      },
+      toggleCafe: () => {
+        sfx.unlock();
+        this.chat.toggle(false);
+        this.emotes.toggle(false);
+        this.toggleCafe();
       },
       toggleVoice: () => {
         sfx.unlock();
@@ -117,16 +160,20 @@ class App {
       rotateView: (step) => this.board.rotateSpectatorView(step),
       takeSeat: (seat) => void this.act('sit', { seat }),
     });
-    this.lobby = new Lobby({
-      sit: (seat) => void this.act('sit', { seat }),
-      stand: () => void this.act('stand'),
-      addBot: (seat) => void this.act('addBot', { seat }),
-      removeBot: (seat) => void this.act('removeBot', { seat }),
-      kick: (playerId) => void this.act('kick', { playerId }),
-      settings: (patch) => void this.act('settings', patch),
-      start: () => void this.act('start'),
-      leave: () => this.leaveRoom(),
-    });
+    this.hud.setDrink(drinkInfo(profile.drink).icon);
+    this.lobby = new Lobby(
+      {
+        sit: (seat) => void this.act('sit', { seat }),
+        stand: () => void this.act('stand'),
+        addBot: (seat) => void this.act('addBot', { seat }),
+        removeBot: (seat) => void this.act('removeBot', { seat }),
+        kick: (playerId) => void this.act('kick', { playerId }),
+        settings: (patch) => void this.act('settings', patch),
+        start: () => void this.act('start'),
+        leave: () => this.leaveRoom(),
+      },
+      { cafe: this.cafe.el, portrait: (p) => this.studio.characterURL(p.character, p.skin, p.color) },
+    );
     this.tags = new SeatTags(this.stage, this.board);
     this.chat = new ChatPanel((text) => this.net.socket.emit('chat', { text }));
     this.chat.onUnread = (n) => this.hud.setUnread(n);
@@ -138,7 +185,7 @@ class App {
       toLobby: () => void this.act('toLobby'),
       leave: () => this.leaveRoom(),
     });
-    this.roomLayer.append(this.tags.el, this.hud.el, this.lobby.el, this.chat.el, this.emotes.el, this.voicePanel.el);
+    this.roomLayer.append(this.tags.el, this.hud.el, this.lobby.el, this.chat.el, this.emotes.el, this.cafePop, this.voicePanel.el);
 
     this.bindNet();
     // The render loop pauses in background tabs: finish animations instantly there so the
@@ -176,6 +223,11 @@ class App {
       const seat = this.room?.seats.findIndex((p) => p?.id === from) ?? -1;
       if (seat >= 0) this.board.emote(seat);
     });
+    s.on('sip', ({ from }) => {
+      // Seats as shown on the board (it may still be catching up with the latest state).
+      const seat = (this.displayed ?? this.room)?.seats.findIndex((p) => p?.id === from) ?? -1;
+      if (seat >= 0) this.board.sip(seat);
+    });
     s.on('left', ({ reason }) => {
       if (reason === 'elsewhere') toast('You opened this table in another tab.', 'error', 4000);
       else if (reason === 'kicked') toast('The host removed you from the table.', 'error', 4000);
@@ -202,14 +254,29 @@ class App {
 
   private onRoomMessage(m: RoomMessage) {
     const first = !this.room || this.room.code !== m.room.code;
+    const before = new Map((first ? [] : this.room!.seats).flatMap((p) => (p ? [[p.id, p.drink] as const] : [])));
     this.room = m.room;
     if (first) this.enterRoomScreen();
+    for (const p of m.room.seats) {
+      if (!p) continue;
+      drinkAudio.prefetch(p.drink);
+      // A new order: they call it out to the waiter.
+      const prev = before.get(p.id);
+      if (prev && prev !== p.drink) {
+        const d = drinkInfo(p.drink);
+        this.tags.bubble(p.id, `${d.icon} ${d.order}`);
+      }
+    }
     // Meta (lobby, voice, tags) reacts immediately; the board animates game events in order.
     this.voice.sync(m.room);
     this.voicePanel.update(m.room);
     const inLobby = m.room.phase === 'lobby';
     this.lobby.el.classList.toggle('hidden', !inLobby);
-    if (inLobby) this.lobby.update(m.room);
+    if (inLobby) {
+      // The lobby shows the café picker itself.
+      this.toggleCafe(false);
+      this.lobby.update(m.room);
+    }
     else if (this.screen === 'room') this.hud.el.classList.remove('in-lobby');
     this.board.push(m);
     if (this.displayed) {
@@ -238,6 +305,20 @@ class App {
     }
     this.wasMyTurn = myTurn;
     setTimeout(() => this.hud.update(room, { myTurnReady: this.board.myTurnReady, busy: false }), 50);
+  }
+
+  private cafeOpen = false;
+
+  /** Opens or closes the café pop-up (in game; the lobby shows the picker inline). */
+  private toggleCafe(force?: boolean) {
+    const open = force ?? !this.cafeOpen;
+    if (open === this.cafeOpen) return;
+    this.cafeOpen = open;
+    if (open) {
+      this.cafeSlot.appendChild(this.cafe.el);
+      this.cafe.render();
+    }
+    this.cafePop.classList.toggle('hidden', !open);
   }
 
   private titleTimer: ReturnType<typeof setInterval> | null = null;
@@ -297,6 +378,7 @@ class App {
     this.room = null;
     this.displayed = null;
     this.chat.toggle(false);
+    this.toggleCafe(false);
     this.voicePanel.toggle(false);
     this.voice.leave();
     this.board.showMenu();
@@ -354,6 +436,9 @@ class App {
     this.clearScreens();
     this.screen = 'room';
     if (!this.roomLayer.parentElement) uiRoot.appendChild(this.roomLayer);
+    // The colour may have changed on the home screen.
+    this.cafe.render();
+    drinkAudio.prefetch(profile.drink);
     sfx.play('join');
   }
 

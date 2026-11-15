@@ -1,17 +1,25 @@
 import { createHash, getRandomValues } from 'node:crypto';
 import {
   AVATAR_COLORS,
+  CHARACTERS,
+  type CharacterId,
   DEFAULT_SETTINGS,
+  DRINKS,
+  type DrinkId,
   type HandshakeAuth,
   NAME_MAX,
   ROOM_CODE_ALPHABET,
   ROOM_CODE_LENGTH,
   type RoomSettings,
+  SKIN_TONES,
   type Welcome,
+  isCharacter,
+  isDrink,
   isRoomCode,
+  isSkin,
   normalizeRoomCode,
 } from '../shared/protocol';
-import { type IO, Room, RoomError, type Sock } from './room';
+import { type IO, type MemberProfile, Room, RoomError, type Sock } from './room';
 
 export function secureRandom(): number {
   const buf = new Uint32Array(1);
@@ -33,15 +41,37 @@ export function sanitizeName(raw: unknown): string {
   return name || 'Player';
 }
 
-export function sanitizeColor(raw: unknown): number {
-  const n = Number(raw);
-  return Number.isInteger(n) && n >= 0 && n < AVATAR_COLORS.length ? n : 0;
+/** Look for clients that do not send one (older builds): stable per player, varied across players. */
+export function defaultLook(id: string): { character: CharacterId; skin: number; drink: DrinkId } {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  h >>>= 0;
+  return {
+    character: CHARACTERS[h % CHARACTERS.length]!.id,
+    skin: (h >>> 8) % SKIN_TONES.length,
+    drink: DRINKS[(h >>> 16) % DRINKS.length]!.id,
+  };
+}
+
+/** Applies the valid fields of an untrusted profile payload; anything missing or invalid keeps its current value. */
+export function applyProfile(current: MemberProfile, raw: unknown): MemberProfile {
+  const p = (raw ?? {}) as Partial<Record<keyof MemberProfile, unknown>>;
+  const color = Number(p.color);
+  return {
+    name: p.name === undefined ? current.name : sanitizeName(p.name),
+    color: Number.isInteger(color) && color >= 0 && color < AVATAR_COLORS.length ? color : current.color,
+    character: isCharacter(p.character) ? p.character : current.character,
+    skin: isSkin(p.skin) ? p.skin : current.skin,
+    drink: isDrink(p.drink) ? p.drink : current.drink,
+  };
 }
 
 interface SocketData {
   id: string;
-  name: string;
-  color: number;
+  profile: MemberProfile;
   room: string | null;
   createdRooms: number[];
 }
@@ -73,10 +103,10 @@ export class RoomManager {
         next(new Error('bad-auth'));
         return;
       }
+      const id = idFromSecret(auth.secret);
       const data: SocketData = {
-        id: idFromSecret(auth.secret),
-        name: sanitizeName(auth.name),
-        color: sanitizeColor(auth.color),
+        id,
+        profile: applyProfile({ name: 'Player', color: 0, ...defaultLook(id) }, auth),
         room: null,
         createdRooms: [],
       };
@@ -157,9 +187,8 @@ export class RoomManager {
       };
 
     socket.on('profile', (p) => {
-      data.name = sanitizeName(p?.name);
-      data.color = sanitizeColor(p?.color);
-      currentRoom()?.updateProfile(data.id, { name: data.name, color: data.color });
+      data.profile = applyProfile(data.profile, p);
+      currentRoom()?.updateProfile(data.id, data.profile);
     });
 
     socket.on('create', (p, ack) => {
@@ -186,7 +215,7 @@ export class RoomManager {
         /* ignore invalid initial settings */
       }
       data.room = code;
-      room.join(data.id, { name: data.name, color: data.color }, socket, false);
+      room.join(data.id, data.profile, socket, false);
       ack({ ok: true, code });
     });
 
@@ -204,7 +233,7 @@ export class RoomManager {
       }
       if (data.room && data.room !== code) leaveCurrent();
       try {
-        room.join(data.id, { name: data.name, color: data.color }, socket, !!p?.spectate);
+        room.join(data.id, data.profile, socket, !!p?.spectate);
         data.room = code;
         ack({ ok: true, code });
       } catch (err) {
@@ -227,6 +256,7 @@ export class RoomManager {
     socket.on('toLobby', guard((room) => room.toLobby(data.id)));
     socket.on('chat', (p) => currentRoom()?.sendChat(data.id, p?.text));
     socket.on('emote', (p) => currentRoom()?.emote(data.id, p?.id));
+    socket.on('sip', () => currentRoom()?.sip(data.id));
     socket.on('voice:join', guard((room, p: { muted: boolean }) => room.voiceJoin(data.id, !!p?.muted)));
     socket.on('voice:leave', () => currentRoom()?.voiceLeave(data.id));
     socket.on('voice:mute', (p) => currentRoom()?.voiceMute(data.id, !!p?.muted));

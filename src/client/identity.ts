@@ -1,4 +1,14 @@
-import { AVATAR_COLORS, NAME_MAX, type Profile } from '../shared/protocol';
+import {
+  AVATAR_COLORS,
+  CHARACTERS,
+  DRINKS,
+  NAME_MAX,
+  type Profile,
+  SKIN_TONES,
+  isCharacter,
+  isDrink,
+  isSkin,
+} from '../shared/protocol';
 
 const KEY = 'karta.profile.v1';
 
@@ -16,7 +26,17 @@ function randomSecret(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+function randomOf<T>(list: readonly T[]): T {
+  return list[Math.floor(Math.random() * list.length)]!;
+}
+
 function load(): StoredProfile {
+  // Players who never picked a character or a drink get a random one (kept once saved).
+  const look = {
+    character: randomOf(CHARACTERS).id,
+    skin: Math.floor(Math.random() * SKIN_TONES.length),
+    drink: randomOf(DRINKS).id,
+  };
   try {
     const raw = localStorage.getItem(KEY);
     if (raw) {
@@ -26,6 +46,9 @@ function load(): StoredProfile {
           secret: p.secret,
           name: typeof p.name === 'string' && p.name.trim() ? p.name.slice(0, NAME_MAX) : NAMES[0]!,
           color: Number.isInteger(p.color) && p.color! >= 0 && p.color! < AVATAR_COLORS.length ? p.color! : 0,
+          character: isCharacter(p.character) ? p.character : look.character,
+          skin: isSkin(p.skin) ? p.skin : look.skin,
+          drink: isDrink(p.drink) ? p.drink : look.drink,
           named: !!p.named,
         };
       }
@@ -37,6 +60,7 @@ function load(): StoredProfile {
     secret: randomSecret(),
     name: NAMES[Math.floor(Math.random() * NAMES.length)]!,
     color: Math.floor(Math.random() * AVATAR_COLORS.length),
+    ...look,
     named: false,
   };
 }

@@ -8,6 +8,7 @@ export interface HudActions {
   rules: () => void;
   toggleChat: () => void;
   toggleEmotes: () => void;
+  toggleCafe: () => void;
   toggleVoice: () => void;
   toggleMic: () => void;
   rotateView: (step: number) => void;
@@ -35,6 +36,7 @@ export class Hud {
   private codeChip = h('button', { class: 'chip code-chip', title: 'Copy invite link' });
   private chatBtn: HTMLButtonElement;
   private chatCount = h('span', { class: 'counter-dot hidden' }, '0');
+  private cafeBtn: HTMLButtonElement;
   private voiceBtn: HTMLButtonElement;
   private micBtn: HTMLButtonElement;
   private soundBtn: HTMLButtonElement;
@@ -86,6 +88,11 @@ export class Hud {
       ),
     );
     this.chatBtn = h('button', { class: 'btn ghost icon-btn', title: 'Chat', onclick: () => actions.toggleChat() }, '💬', this.chatCount);
+    this.cafeBtn = h(
+      'button',
+      { class: 'btn ghost icon-btn cafe-btn', title: 'Café: your order and your character', onclick: () => actions.toggleCafe() },
+      '☕',
+    );
     this.voiceBtn = h('button', { class: 'btn teal icon-btn voice-btn', title: 'Join voice chat', onclick: () => actions.toggleVoice() }, '🎧');
     this.micBtn = h('button', { class: 'btn icon-btn hidden', title: 'Microphone (hold V to talk)', onclick: () => actions.toggleMic() }, '🎙️');
     const bottom = h(
@@ -96,6 +103,7 @@ export class Hud {
         { class: 'dock' },
         this.chatBtn,
         h('button', { class: 'btn ghost icon-btn', title: 'Reactions', onclick: () => actions.toggleEmotes() }, '😄'),
+        this.cafeBtn,
       ),
       h('div', { class: 'dock' }, this.micBtn, this.voiceBtn),
     );
@@ -110,6 +118,11 @@ export class Hud {
     const left = Math.max(0, Math.ceil((this.deadline - Date.now()) / 1000));
     this.banner.textContent = `${this.bannerText}  ⏱ ${left}s`;
     this.banner.classList.toggle('urgent', left <= 5);
+  }
+
+  /** The café button shows what you are drinking. */
+  setDrink(icon: string) {
+    this.cafeBtn.textContent = icon;
   }
 
   setUnread(n: number) {

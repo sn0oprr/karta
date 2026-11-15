@@ -105,6 +105,11 @@ class Animator {
     }
   }
 
+  /** Is an animation owned by `owner` still running? */
+  isRunning(owner: object): boolean {
+    return this.items.some((it) => it.owner === owner && !it.done);
+  }
+
   /** Finishes everything instantly. */
   finishAll() {
     const items = this.items;

@@ -4,14 +4,25 @@
 import * as THREE from 'three';
 import { type Card, parseCard } from '../../shared/cards';
 import { type Move, captureOptions } from '../../shared/chkobba';
-import { AVATAR_COLORS, type GameEvent, type PlayerInfo, type RoomMessage, type RoomView } from '../../shared/protocol';
+import {
+  AVATAR_COLORS,
+  type CharacterId,
+  type DrinkId,
+  type GameEvent,
+  type PlayerInfo,
+  type RoomMessage,
+  type RoomView,
+} from '../../shared/protocol';
 import { Avatar, buildChair } from './avatar';
 import { CARD_H, CARD_T, CardObject, CardStack } from './cardMesh';
-import { Confetti, Shockwave } from './fx';
+import { DrinkProp, type Drinker, avatarDrinker, performSip } from './drinks';
+import { Confetti, Shockwave, Smoke } from './fx';
 import {
   TABLE_SLOTS,
   avatarPosition,
+  chichaPosition,
   deckPosition,
+  drinkPosition,
   heldCardTransform,
   myHandTransform,
   pilePosition,
@@ -35,7 +46,19 @@ export interface BoardCallbacks {
   onDisplayed: (room: RoomView) => void;
   sfx: (name: SfxName) => void;
   onInvalid: (reason: string) => void;
+  /** The local player sipped their drink (tell the table). */
+  onSip: () => void;
+  /** Plays one sip of `drink` (pan −1…1); resolves with its length in seconds once it starts. */
+  drinkSound: (drink: DrinkId, pan: number) => Promise<number>;
 }
+
+/** The home screen's regulars: who they are and what they drink. */
+const MENU_GUESTS: { character: CharacterId; skin: number; drink: DrinkId }[] = [
+  { character: 'hajj', skin: 1, drink: 'chicha' },
+  { character: 'nejma', skin: 3, drink: 'coke' },
+  { character: 'wled', skin: 2, drink: 'tea' },
+  { character: 'hajja', skin: 0, drink: 'express' },
+];
 
 export type SfxName = 'deal' | 'lay' | 'capture' | 'chkobba' | 'flip' | 'hover' | 'select' | 'myTurn' | 'shuffle' | 'sweep';
 
@@ -65,6 +88,11 @@ export class Board {
   private avatars: (Avatar | null)[] = [];
   private avatarKeys: (string | null)[] = [];
   private chairs: (THREE.Group | null)[] = [];
+  /** Each seat's order (cup on the table, or a chicha beside it). */
+  private drinks: (DrinkProp | null)[] = [];
+  private drinkKeys: (string | null)[] = [];
+  private smoke: Smoke;
+  private drinkHovered = false;
   private handGroup = new THREE.Group();
   private myHand: CardObject[] = [];
   private held: CardObject[][] = [];
@@ -120,6 +148,7 @@ export class Board {
 
     this.confetti = new Confetti(stage.scene);
     this.shockwave = new Shockwave(stage.scene);
+    this.smoke = new Smoke(stage.scene);
 
     stage.onFrame((dt, t) => this.update(dt, t));
     stage.onResize(() => {
@@ -143,6 +172,7 @@ export class Board {
     this.queue = [];
     this.clearAll();
     this.syncAvatars(null);
+    this.syncDrinks(null);
     this.setupMenuScene();
     this.setCamera('menu');
   }
@@ -154,7 +184,8 @@ export class Board {
     this.mySeat = null;
     const palette = [0, 5, 2, 3];
     for (let s = 0; s < n; s++) {
-      const av = new Avatar(`menu-guest-${s * 7 + 3}`, AVATAR_COLORS[palette[s]!]!);
+      const guest = MENU_GUESTS[s]!;
+      const av = new Avatar({ character: guest.character, skin: guest.skin, color: AVATAR_COLORS[palette[s]!]! });
       av.root.position.copy(avatarPosition(s, n));
       av.root.rotation.y = viewYaw(s, n);
       av.root.scale.setScalar(AVATAR_SCALE);
@@ -162,6 +193,7 @@ export class Board {
       this.group.add(av.root);
       this.avatars[s] = av;
       this.avatarKeys[s] = `menu-${s}`;
+      this.placeDrink(s, guest.drink, `menu-${s}`, false);
       this.held[s] = [];
       for (let i = 0; i < 3; i++) {
         const c = this.take(null);
@@ -236,6 +268,71 @@ export class Board {
     this.avatars[seat]?.nod();
   }
 
+  /** Another player at the table sips their drink (the server relays it). */
+  sip(seat: number) {
+    if (seat !== this.mySeat) void this.playSip(seat, true);
+  }
+
+  /** The local player sips: animate right away and tell the others. */
+  private sipMine() {
+    const seat = this.mySeat;
+    const prop = seat === null ? null : this.drinks[seat];
+    if (seat === null || !prop || prop.busy) return;
+    this.cb.onSip();
+    void this.playSip(seat, true);
+  }
+
+  private async playSip(seat: number, withSound: boolean) {
+    const prop = this.drinks[seat];
+    if (!prop || prop.busy || document.hidden) return;
+    const firstPerson = seat === this.mySeat;
+    const av = firstPerson ? null : (this.avatars[seat] ?? null);
+    if (!firstPerson && !av) return;
+    const pan = this.panFor(seat);
+    await performSip({
+      prop,
+      drinker: av ? avatarDrinker(av) : this.firstPersonDrinker(prop),
+      smoke: this.smoke,
+      sound: () => (withSound ? this.cb.drinkSound(prop.kind, pan) : Promise.resolve(1.3)),
+      alive: () => this.drinks[seat] === prop && (av ? this.avatars[seat] === av : this.mySeat === seat),
+    });
+  }
+
+  /**
+   * The local player, seen through the camera: a cup rises toward the screen; the chicha's
+   * mouthpiece goes to the (unseen) mouth just behind the cards, and the smoke rolls out over the table.
+   */
+  private firstPersonDrinker(prop: DrinkProp): Drinker {
+    const cam = this.stage.camera;
+    const restP = new THREE.Vector3();
+    const restQ = new THREE.Quaternion();
+    const myMouth = (out: THREE.Vector3) => {
+      const v = this.viewOf(this.mySeat ?? 0);
+      return out.copy(avatarPosition(v, this.n)).addScaledVector(viewDir(v, this.n), -0.4).setY(1.2);
+    };
+    return {
+      avatar: null,
+      mouth: (out) => {
+        if (prop.kind === 'chicha') return myMouth(out);
+        prop.restTransform(restP, restQ);
+        return out.lerpVectors(restP, cam.position, 0.46);
+      },
+      head: (out) => out.copy(cam.position),
+      breath: (origin, dir) => {
+        const v = this.viewOf(this.mySeat ?? 0);
+        myMouth(origin).setY(1.8);
+        dir.copy(viewDir(v, this.n)).multiplyScalar(-1).add(new THREE.Vector3(0, 0.3, 0));
+      },
+    };
+  }
+
+  /** Stereo position of a seat, from where it is on screen. */
+  private panFor(seat: number): number {
+    if (seat === this.mySeat || !this.room) return 0;
+    const p = this.stage.project(avatarPosition(this.viewOf(seat), this.n), tmpV2);
+    return THREE.MathUtils.clamp((p.x / Math.max(1, this.stage.width)) * 2 - 1, -1, 1) * 0.7;
+  }
+
   // ═══════════════════════════════ processing ═══════════════════════════════
 
   private async processQueue() {
@@ -284,6 +381,7 @@ export class Board {
     this.room = room;
     if (layoutChanged) this.layoutStatic();
     this.syncAvatars(room);
+    this.syncDrinks(room);
     this.syncCards(room, layoutChanged);
     this.syncTurn(room);
     if (this.cameraMode !== 'seat') this.setCamera('seat');
@@ -318,19 +416,21 @@ export class Board {
     for (let s = 0; s < Math.max(n, this.avatars.length); s++) {
       const player: PlayerInfo | null = room && s < n ? (room.seats[s] ?? null) : null;
       const visible = !!player && s !== room!.you.seat;
-      const key = player ? `${player.id}` : null;
+      // A new character or skin tone means a new avatar.
+      const key = player ? `${player.id}|${player.character}|${player.skin}` : null;
       let av = this.avatars[s] ?? null;
       if (!visible || this.avatarKeys[s] !== key) {
-        if (av) {
-          av.root.removeFromParent();
-          av = null;
-        }
-        this.avatars[s] = null;
-        this.avatarKeys[s] = null;
         if (this.held[s]) {
           for (const c of this.held[s]!) this.release(c);
           this.held[s] = [];
         }
+        if (av) {
+          av.root.removeFromParent();
+          av.dispose();
+          av = null;
+        }
+        this.avatars[s] = null;
+        this.avatarKeys[s] = null;
       }
       // Empty seats show an empty chair waiting for a friend.
       const wantChair = !!room && s < n && !player && s !== room.you.seat;
@@ -350,7 +450,7 @@ export class Board {
       }
       if (visible && player) {
         if (!av) {
-          av = new Avatar(player.id, AVATAR_COLORS[player.color] ?? AVATAR_COLORS[0]);
+          av = new Avatar({ character: player.character, skin: player.skin, color: AVATAR_COLORS[player.color] ?? AVATAR_COLORS[0] });
           this.avatars[s] = av;
           this.avatarKeys[s] = key;
           this.group.add(av.root);
@@ -366,6 +466,83 @@ export class Board {
     this.avatars.length = Math.max(n, 0);
     for (let s = n; s < this.chairs.length; s++) this.chairs[s]?.removeFromParent();
     this.chairs.length = Math.max(n, 0);
+  }
+
+  // ═══════════════════════════════ drinks ═══════════════════════════════
+
+  /** Everyone seated has their order in front of them (the local player's too). */
+  private syncDrinks(room: RoomView | null) {
+    const n = room ? room.seats.length : 0;
+    for (let s = 0; s < Math.max(n, this.drinks.length); s++) {
+      const player = room && s < n ? (room.seats[s] ?? null) : null;
+      const key = player ? `${player.id}|${player.drink}` : null;
+      if (this.drinkKeys[s] !== key) {
+        // Same player, new order: the new drink is served with a little pop.
+        const reorder = !!player && !!this.drinkKeys[s]?.startsWith(`${player.id}|`);
+        this.drinks[s]?.dispose();
+        this.drinks[s] = null;
+        this.drinkKeys[s] = null;
+        // A new drink under the mouse gets its hover look on the next frame.
+        if (s === this.mySeat) this.drinkHovered = false;
+        if (player) this.placeDrink(s, player.drink, key!, reorder);
+      } else if (this.drinks[s]) this.positionDrink(s);
+    }
+    this.drinks.length = n;
+    this.drinkKeys.length = n;
+    if (!this.myDrink()) this.drinkHovered = false;
+  }
+
+  private placeDrink(seat: number, kind: DrinkId, key: string, served: boolean) {
+    const prop = new DrinkProp(kind);
+    if (kind === 'chicha') {
+      // The smoker holds the hose; the local player's rests by their cards.
+      prop.restAnchor = (out) => {
+        const av = this.avatars[seat];
+        if (av) return av.leftHand.getWorldPosition(out);
+        if (seat !== this.mySeat) return null;
+        const v = this.viewOf(seat);
+        return out
+          .copy(avatarPosition(v, this.n))
+          .addScaledVector(viewDir(v, this.n), -1.5)
+          .addScaledVector(viewRight(v, this.n), -1.25)
+          .setY(0.7);
+      };
+    }
+    this.drinks[seat] = prop;
+    this.drinkKeys[seat] = key;
+    this.group.add(prop.root);
+    this.positionDrink(seat);
+    if (served) {
+      prop.root.scale.setScalar(0.01);
+      void animator.run({
+        duration: 420,
+        ease: ease.outBack,
+        owner: prop.root,
+        update: (t) => prop.root.scale.setScalar(Math.max(0.01, prop.baseScale * t)),
+      });
+    }
+  }
+
+  private positionDrink(seat: number) {
+    const prop = this.drinks[seat];
+    if (!prop) return;
+    const v = this.viewOf(seat);
+    const seatPos = avatarPosition(v, this.n);
+    const pos = prop.kind === 'chicha' ? chichaPosition(v, this.n) : drinkPosition(v, this.n);
+    prop.root.position.copy(pos);
+    // Local +Z faces the drinker (the chicha's hose port, the cup's handle side).
+    prop.root.rotation.y = Math.atan2(seatPos.x - pos.x, seatPos.z - pos.z);
+  }
+
+  private myDrink(): DrinkProp | null {
+    return this.mySeat === null ? null : (this.drinks[this.mySeat] ?? null);
+  }
+
+  private pointerOnMyDrink(): boolean {
+    const prop = this.myDrink();
+    if (!prop) return false;
+    this.raycaster.setFromCamera(this.pointer, this.stage.camera);
+    return this.raycaster.intersectObject(prop.hit, false).length > 0;
   }
 
   // ═══════════════════════════════ cards ═══════════════════════════════
@@ -1040,7 +1217,9 @@ export class Board {
       if (this.menuCheer > 6 && !this.room) {
         this.menuCheer = 0;
         const s = Math.floor(Math.random() * 4);
-        if (Math.random() < 0.5) this.avatars[s]?.celebrate();
+        const r = Math.random();
+        if (r < 0.45) void this.playSip(s, false);
+        else if (r < 0.75) this.avatars[s]?.celebrate();
         else this.avatars[s]?.nod();
       }
       this.menuAngle += dt * 0.06;
@@ -1055,8 +1234,10 @@ export class Board {
     } else this.applyCamera(1);
 
     for (const av of this.avatars) av?.update(dt, time);
+    for (const d of this.drinks) d?.update(dt, time, this.smoke);
     this.confetti.update(dt);
     this.shockwave.update(dt);
+    this.smoke.update(dt);
 
     // Turn arc pulse.
     if (this.turnArc.visible) {
@@ -1107,6 +1288,10 @@ export class Board {
     el.addEventListener('pointerleave', () => {
       this.pointerInside = false;
       this.setHovered(null);
+      if (this.drinkHovered) {
+        this.drinkHovered = false;
+        this.myDrink()?.setHover(false);
+      }
     });
     el.addEventListener('pointerdown', (e) => {
       updatePointer(e);
@@ -1114,6 +1299,10 @@ export class Board {
     });
     window.addEventListener('keydown', (e) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if ((e.key === 'd' || e.key === 'D') && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        this.sipMine();
+        return;
+      }
       const idx = ['1', '2', '3'].indexOf(e.key);
       if (idx >= 0 && this.myHand[idx]) {
         if (this.selected === this.myHand[idx]) void this.tryPlay(this.myHand[idx]!);
@@ -1137,7 +1326,12 @@ export class Board {
   private updateHover() {
     const hit = this.pick();
     this.setHovered(hit && hit.role === 'hand' ? hit : null);
-    this.stage.renderer.domElement.style.cursor = hit && hit.role === 'hand' && this.canAct() ? 'pointer' : 'default';
+    const onDrink = !hit && this.pointerOnMyDrink();
+    if (onDrink !== this.drinkHovered) {
+      this.drinkHovered = onDrink;
+      this.myDrink()?.setHover(onDrink);
+    }
+    this.stage.renderer.domElement.style.cursor = onDrink || (hit && hit.role === 'hand' && this.canAct()) ? 'pointer' : 'default';
   }
 
   private setHovered(c: CardObject | null) {
@@ -1189,7 +1383,9 @@ export class Board {
     if (this.choosing) return;
     const hit = this.pick();
     if (!hit) {
-      if (this.selected) this.clearSelection();
+      // Tap your own drink to take a sip.
+      if (this.pointerOnMyDrink()) this.sipMine();
+      else if (this.selected) this.clearSelection();
       return;
     }
     if (hit.role === 'hand') {

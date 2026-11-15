@@ -39,18 +39,60 @@ export const AVATAR_COLORS = [
   '#fb8500', // orange
 ] as const;
 
+/** Who you are at the café table. */
+export const CHARACTERS = [
+  { id: 'hajj', name: 'El Hajj', hint: 'Old man in a red chechia' },
+  { id: 'wled', name: 'Wled 7ouma', hint: 'Guy from the neighbourhood' },
+  { id: 'patron', name: 'El Patron', hint: 'The café boss' },
+  { id: 'sportif', name: 'Sportif', hint: 'Cap on backwards' },
+  { id: 'lella', name: 'Lella', hint: 'Jasmine behind the ear' },
+  { id: 'hajja', name: 'El Hajja', hint: 'Grandma in her headscarf' },
+  { id: 'taleba', name: 'Taleba', hint: 'Curly-haired student' },
+  { id: 'nejma', name: 'Nejma', hint: 'The star of the café' },
+] as const;
+export type CharacterId = (typeof CHARACTERS)[number]['id'];
+
+export const SKIN_TONES = ['#f6c9a0', '#e8b088', '#d39a6a', '#b97a4f', '#8d5a3a'] as const;
+
+/** What you order from the café. Tap it on the table to take a sip. */
+export const DRINKS = [
+  { id: 'express', name: 'Express', icon: '☕', order: 'Wa7ed express!' },
+  { id: 'tea', name: 'Tea', icon: '🍵', order: 'Tay bel bondok!' },
+  { id: 'chicha', name: 'Chicha', icon: '💨', order: 'Jibli chicha!' },
+  { id: 'coke', name: 'Coke', icon: '🥤', order: 'Wa7da Coca!' },
+] as const;
+export type DrinkId = (typeof DRINKS)[number]['id'];
+
+export function isCharacter(v: unknown): v is CharacterId {
+  return CHARACTERS.some((c) => c.id === v);
+}
+
+export function isDrink(v: unknown): v is DrinkId {
+  return DRINKS.some((d) => d.id === v);
+}
+
+export function isSkin(v: unknown): v is number {
+  return Number.isInteger(v) && (v as number) >= 0 && (v as number) < SKIN_TONES.length;
+}
+
 export const NAME_MAX = 18;
 export const CHAT_MAX = 200;
 
 export interface Profile {
   name: string;
   color: number;
+  character: CharacterId;
+  skin: number;
+  drink: DrinkId;
 }
 
 export interface PlayerInfo {
   id: string;
   name: string;
   color: number;
+  character: CharacterId;
+  skin: number;
+  drink: DrinkId;
   bot: boolean;
   connected: boolean;
   /** The server is playing for this (disconnected) player. */
@@ -195,6 +237,8 @@ export interface ClientToServer {
   toLobby: (ack: Ack) => void;
   chat: (p: { text: string }) => void;
   emote: (p: { id: EmoteId }) => void;
+  /** A seated player sips their drink (or puffs their chicha). */
+  sip: () => void;
   'voice:join': (p: { muted: boolean }, ack: Ack) => void;
   'voice:leave': () => void;
   'voice:mute': (p: { muted: boolean }) => void;
@@ -208,6 +252,8 @@ export interface ServerToClient {
   chat: (m: ChatMessage) => void;
   chatHistory: (m: ChatMessage[]) => void;
   emote: (p: { from: string; id: EmoteId }) => void;
+  /** Someone else at the table took a sip (the sender animates their own sip locally). */
+  sip: (p: { from: string }) => void;
   'voice:signal': (p: { from: string; data: unknown }) => void;
 }
 
@@ -215,6 +261,9 @@ export interface HandshakeAuth {
   secret: string;
   name: string;
   color: number;
+  character: CharacterId;
+  skin: number;
+  drink: DrinkId;
 }
 
 /** Room codes avoid look-alike characters (no I, O, 0, 1). */
