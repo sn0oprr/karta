@@ -43,9 +43,12 @@ npm start            # production server (serves the client too) on $PORT (defau
 ### Docker
 
 ```bash
-docker build -t karta .
-docker run -p 3000:3000 karta
+docker compose up -d --build     # http://localhost:3000 (KARTA_BIND=127.0.0.1:3510 to change the host side)
 ```
+
+Production runs at https://karta.gamez.tn on `radyou.tn`: the repo is cloned in `/opt/games/karta` (read-only
+deploy key, ssh alias `github-karta`), `~/bin/deploy-karta.sh` fast-forwards it to `origin/main` and rebuilds the
+container (compose project `karta`) on `127.0.0.1:3510`, and the host Caddy proxies `karta.gamez.tn` to it.
 
 ## Deploying
 

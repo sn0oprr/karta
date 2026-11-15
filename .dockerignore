@@ -1,5 +1,17 @@
 node_modules
 dist
 .git
+.github
+.claude
+.env
 *.log
+coverage
+test
 test-results
+playwright-report
+*.md
+card-preview.html
+deploy-*.sh
+compose.yaml
+Dockerfile
+.dockerignore
