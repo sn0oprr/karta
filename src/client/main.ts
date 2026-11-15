@@ -82,6 +82,7 @@ class App {
       this.voice.updateLevels();
       this.tags.levels = this.voice.levels;
       this.voicePanel.levels(this.voice.levels);
+      this.hud.setMicLevel(this.net.id ? (this.voice.levels.get(this.net.id) ?? 0) : 0);
       const room = this.displayed;
       if (room) {
         for (let s = 0; s < room.seats.length; s++) {
@@ -169,6 +170,8 @@ class App {
     s.on('emote', ({ from, id }) => {
       const text = this.tags.emoteText(id);
       this.tags.bubble(from, text);
+      const who = [...(this.room?.seats ?? []), ...(this.room?.spectators ?? [])].find((p) => p?.id === from);
+      if (who) this.chat.add({ id: -1, from, name: who.name, color: who.color, text, ts: Date.now(), system: false }, true);
       sfx.play('pop');
       const seat = this.room?.seats.findIndex((p) => p?.id === from) ?? -1;
       if (seat >= 0) this.board.emote(seat);
@@ -268,6 +271,11 @@ class App {
 
   private route() {
     const { code, spectate } = routeCode();
+    if (this.screen === 'room' && this.roomCode && code !== this.roomCode) {
+      this.net.socket.emit('leave');
+      this.roomCode = null;
+    }
+    if (code && code === this.roomCode && this.screen === 'room') return;
     if (code && code.length === 5) {
       if (profile.named) void this.joinRoom(code, spectate);
       else this.goHome({ prefillCode: code, spectate });

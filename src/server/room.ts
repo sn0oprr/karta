@@ -206,7 +206,8 @@ export class Room {
       } else if (wasAway) {
         this.system(`${member.name} reconnected.`);
       }
-      if (this.game && this.seatOf(id) === this.game.turn && this.phase === 'playing') this.scheduleTurn();
+      if (this.game && (this.phase === 'playing' || this.phase === 'roundOver') && !this.actionTimer) this.scheduleTurn();
+      else if (this.game && this.seatOf(id) === this.game.turn && this.phase === 'playing') this.scheduleTurn();
     } else {
       member = {
         id,
@@ -229,6 +230,7 @@ export class Room {
         this.spectators.push(member);
       }
       this.system(`${member.name} joined${this.seatOf(id) === null ? ' as a spectator' : ''}.`);
+      if (this.game && (this.phase === 'playing' || this.phase === 'roundOver') && !this.actionTimer) this.scheduleTurn();
     }
     if (!this.members.has(this.hostId)) this.hostId = id;
     void socket.join(this.code);
@@ -665,6 +667,7 @@ export class Room {
     if (!game || this.destroyed) return;
     const now = Date.now();
     if (this.phase === 'roundOver') {
+      if (this.connectedHumans().length === 0) return;
       this.nextRoundAt = Math.max(now, this.busyUntil) + TIMING.roundPause;
       this.actionTimer = setTimeout(() => this.startNextRound(), this.nextRoundAt - now);
       return;
@@ -673,6 +676,8 @@ export class Room {
     const seat = game.turn;
     const member = this.seats[seat];
     if (!member) return;
+    // Nobody is watching: pause until someone (re)connects instead of letting bots play alone.
+    if (this.connectedHumans().length === 0) return;
     const startAt = Math.max(now, this.busyUntil);
     if (member.bot) {
       const think = TIMING.botThinkMin + this.deps.rand() * (TIMING.botThinkMax - TIMING.botThinkMin);

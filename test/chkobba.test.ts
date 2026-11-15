@@ -131,6 +131,19 @@ describe('ChkobbaGame', () => {
     expect(g.turn).toBe(0);
   });
 
+  it('rejects capture lists with duplicates or malformed payloads', () => {
+    const g = new ChkobbaGame({ numPlayers: 2, targetScore: 21, rand: seededRandom(21), firstDealer: 0 });
+    g.startRound();
+    g.table = [c('3S'), c('7D')];
+    g.hands[1] = [c('10H'), c('1C'), c('2C')];
+    g.turn = 1;
+    expect(g.isLegal(1, { cardId: '10H', capture: ['7D', '7D'] })).toBe(false);
+    expect(g.isLegal(1, { cardId: '10H', capture: '7D' as unknown as string[] })).toBe(false);
+    expect(g.isLegal(1, null as unknown as { cardId: string; capture: string[] })).toBe(false);
+    expect(() => g.play(1, { cardId: '10H', capture: ['7D', '7D'] })).toThrow(/Illegal/);
+    expect(g.isLegal(1, { cardId: '10H', capture: ['7D', '3S'] })).toBe(true);
+  });
+
   it('scores a chkobba when the table is swept', () => {
     const g = new ChkobbaGame({ numPlayers: 2, targetScore: 21, rand: seededRandom(3), firstDealer: 0 });
     g.startRound();

@@ -18,7 +18,8 @@ export function teamNames(room: RoomView, team: number): string {
   return room.seats
     .map((p, i) => ({ p, i }))
     .filter(({ i }) => teamOf(i) === team)
-    .map(({ p }) => p?.name ?? '—')
+    .sort((a, b) => (a.i === room.you.seat ? -1 : b.i === room.you.seat ? 1 : 0))
+    .map(({ p, i }) => (i === room.you.seat ? 'You' : (p?.name ?? '—')))
     .join(' & ');
 }
 
@@ -116,6 +117,10 @@ export class Hud {
     this.chatCount.classList.toggle('hidden', n === 0);
   }
 
+  setMicLevel(level: number) {
+    this.micBtn.style.boxShadow = level > 0.06 ? `0 5px 0 var(--ink), 0 0 0 ${Math.round(3 + level * 9)}px rgba(63,185,80,.55)` : '';
+  }
+
   setVoice(joined: boolean, muted: boolean, hasMic: boolean) {
     this.voiceBtn.textContent = joined ? '📞' : '🎧';
     this.voiceBtn.title = joined ? 'Voice chat (connected)' : 'Join voice chat';
@@ -135,9 +140,10 @@ export class Hud {
     const my = room.you.seat;
     const myTeam = my === null ? 0 : teamOf(my);
     const scores = g?.scores ?? [0, 0];
-    const label = (t: number) => (n === 2 ? (room.seats[t]?.name ?? '—') : teamNames(room, t));
-    this.namesA.textContent = label(0) + (my !== null && myTeam === 0 ? ' (you)' : '');
-    this.namesB.textContent = label(1) + (my !== null && myTeam === 1 ? ' (you)' : '');
+    const label = (t: number) => (n === 2 ? (t === my ? 'You' : (room.seats[t]?.name ?? '—')) : teamNames(room, t));
+    this.namesA.textContent = label(0);
+    this.namesB.textContent = label(1);
+    void myTeam;
     for (const t of [0, 1] as const) {
       const el = t === 0 ? this.scoreA : this.scoreB;
       el.textContent = String(scores[t]);

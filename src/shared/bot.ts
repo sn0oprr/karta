@@ -8,7 +8,7 @@
  * end of the hand. Captured cards and chkobbas are counted exactly; each card not captured yet is assumed to
  * go to either side with probability ½, which turns karta (21+ cards), dinari (6+ diamonds) and bermila
  * (3+ sevens, 2–2 → sixes) into probabilities. A card is therefore worth what it changes in the outcome: the
- * 7♦ about 1.7 points, a seven ~0.5, a diamond ~0.35, a plain card ~0.1 early in the hand — and a diamond is
+ * 7♦ about 1.7 points, a seven ~0.5, a diamond ~0.3, a plain card ~0.1 early in the hand — and a diamond is
  * worth nothing once a side holds six of them.
  *
  * Hidden hands are handled with an order statistic: a player whose h cards are a uniform random subset of the
@@ -26,7 +26,8 @@
  *    plies). Last deal (empty stock): alpha-beta to the end of the hand — exact with 2 players (the opponent's
  *    hand is known by elimination), averaged over the possible deals of the hidden hands with 4 players.
  *
- * Typical cost per decision: easy/normal ~0.01–0.05 ms, hard ~0.5 ms (bounded to a few ms).
+ * Cost per decision (average): easy/normal ~0.01–0.02 ms; hard ~0.7 ms with 2 players, ~0.2 ms with 4. Hard's
+ * searches run on a deterministic work budget, which keeps its worst case at a few ms.
  */
 import type { Card, Suit } from './cards';
 import type { ChkobbaGame, Move } from './chkobba';
@@ -109,11 +110,14 @@ const ENDGAME_ENUMERATE = 64;
 const ENDGAME_WORLDS = 8;
 const ENDGAME_DEPTH = 5;
 /**
- * Work budget of one hard search (search nodes + card kinds evaluated + capture subsets enumerated; a unit is
- * roughly 0.1–0.4 µs). Over budget, hard falls back to a cheaper search, so a decision stays within a few ms
- * even on freak tables; normal games rarely come close.
+ * Work budgets of the hard searches, in units of search nodes + card kinds evaluated + capture subsets
+ * enumerated (~0.09 µs per unit in the lookahead, ~0.14 µs in the endgame search). Over budget, hard falls
+ * back to a cheaper search, so a decision stays within a few ms even on freak tables. In real games the
+ * five-ply lookahead fits in 99% of positions and the endgame search in 99.9%.
  */
-const BUDGET = 10000;
+const LOOK_BUDGET = 32000;
+const FALLBACK_BUDGET = 16000;
+const SEARCH_BUDGET = 30000;
 
 // ---------------------------------------------------------------------------------------------------------
 // Cards as small integers: code = (rank - 1) * 4 + suit, diamonds = 0.
@@ -257,14 +261,15 @@ function handValue(st: Stats, us: number): number {
 // Captures and plays on integer tables
 // ---------------------------------------------------------------------------------------------------------
 
-/** Work counter of the current search (a deterministic time bound, see BUDGET). */
+/** Work counter of the current search (a deterministic time bound, see LOOK_BUDGET). */
 let work = 0;
 let workLimit = Infinity;
 const OVER_BUDGET = new Error('bot search over budget');
 
-/** Counts one search node; aborts the search (only at a node boundary) once over budget. */
-function step(): void {
-  if (++work > workLimit) throw OVER_BUDGET;
+/** Counts a search node; aborts the search (only at a node boundary) once over budget. */
+function step(units: number): void {
+  work += units;
+  if (work > workLimit) throw OVER_BUDGET;
 }
 
 /** Runs `search` with a work budget; null if it ran over. */
@@ -453,7 +458,7 @@ function pickMove(ctx: BotContext, moves: readonly Move[], level: BotLevel, rand
   let scores: number[] | null = null;
   if (level === 'hard') {
     if (pos.deck === 0) scores = endgameScores(pos, roots, rand);
-    else if (pos.n === 2) scores = lookScores(pos, roots, HARD_DEPTH) ?? lookScores(pos, roots, 3);
+    else if (pos.n === 2) scores = lookScores(pos, roots, HARD_DEPTH, LOOK_BUDGET) ?? lookScores(pos, roots, 3, FALLBACK_BUDGET);
   }
   return bestOf(roots, scores ?? normalScores(pos, roots), rand);
 }
@@ -527,7 +532,6 @@ function normalScores(pos: Position, moves: readonly RootMove[]): number[] {
   });
 }
 
-
 /** E[value of the best of h cards drawn from the N in `count`], with `kinds` sorted best-first. */
 function expectBest(kinds: readonly number[], count: readonly number[], value: readonly number[], N: number, h: number): number {
   if (h > N) h = N;
@@ -587,6 +591,7 @@ function replyValue(
       continue;
     }
     let best = opponent ? Infinity : -Infinity;
+    work += masks.length;
     for (const mask of masks) {
       // The captured cards go to `team`; on the last card of the hand the rest of the table follows them.
       const taken = last ? all : mask;
@@ -661,7 +666,7 @@ class Lookahead {
   ) {}
 
   value(st: Stats, table: number[], lastCap: number, level: number, hand: readonly number[]): number {
-    step();
+    step(1 + (table.length >> 2));
     const plies = this.plies;
     if (level >= plies.length) return handValue(st, this.us);
     const p = plies[level]!;
@@ -716,9 +721,9 @@ class Lookahead {
  * Scores of the root moves with the analytic lookahead over `depth` plies (the bot's move included),
  * or null if that runs over the work budget.
  */
-function lookScores(pos: Position, moves: readonly RootMove[], depth: number): number[] | null {
+function lookScores(pos: Position, moves: readonly RootMove[], depth: number, budget: number): number[] | null {
   const look = new Lookahead(pos.us, plySequence(pos, depth - 1), kindCounts(pos.unseen), pos.unseen.length);
-  return withBudget(BUDGET, () =>
+  return withBudget(budget, () =>
     moves.map((m) => {
       const after = applyRoot(pos, m);
       const rest = pos.hand.filter((c) => c !== m.card);
@@ -750,7 +755,7 @@ class World {
 
   /** Value with `seat` to play and `depth` plies left; team `us` maximizes. */
   search(seat: number, depth: number, alpha: number, beta: number): number {
-    step();
+    step(1 + (this.table.length >> 2));
     if (this.handTotal === 0) return this.handOver();
     if (depth <= 0) return handValue(this.st, this.us);
     const hand = this.hands[seat]!;
@@ -883,7 +888,7 @@ function endgameScores(pos: Position, moves: readonly RootMove[], rand: () => nu
 
   const sums = new Array<number>(moves.length).fill(0);
   let done = 0;
-  withBudget(BUDGET, () => {
+  withBudget(SEARCH_BUDGET, () => {
     for (const deal of deals) {
       const world = new World(pos.n, pos.us, pos.st, pos.table, pos.lastCap);
       others.forEach((s, i) => (world.hands[s] = deal[i]!.slice()));
@@ -902,10 +907,5 @@ function endgameScores(pos: Position, moves: readonly RootMove[], rand: () => nu
       done++;
     }
   });
-  lastNodes = work;
   return done > 0 ? sums.map((s) => s / done) : null;
 }
-
-// TEMP (dev only)
-export let lastNodes = 0;
-export const _dev = { captureTable, replyValue, handValue, addCard, codeOf, kindCounts, buildPosition, rootMoves, normalScores, lookScores, endgameScores };

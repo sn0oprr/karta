@@ -151,9 +151,10 @@ export function legalMovesFor(hand: readonly Card[], table: readonly Card[]): Mo
 }
 
 function sameIdSet(a: readonly string[], b: readonly string[]): boolean {
-  if (a.length !== b.length) return false;
+  if (!Array.isArray(b) || a.length !== b.length) return false;
   const s = new Set(a);
-  if (s.size !== a.length) return false;
+  // Both sides must be duplicate-free, otherwise ['7D','7D'] would "match" ['3S','7D'].
+  if (s.size !== a.length || new Set(b).size !== b.length) return false;
   return b.every((id) => s.has(id));
 }
 
@@ -327,6 +328,7 @@ export class ChkobbaGame {
   }
 
   isLegal(seat: number, move: Move): boolean {
+    if (!move || typeof move.cardId !== 'string' || !Array.isArray(move.capture)) return false;
     return this.legalMoves(seat).some((m) => m.cardId === move.cardId && sameIdSet(m.capture, move.capture));
   }
 
