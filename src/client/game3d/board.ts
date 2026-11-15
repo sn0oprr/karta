@@ -17,6 +17,7 @@ import {
   pilePosition,
   rimAngle,
   viewDir,
+  viewRight,
   viewYaw,
 } from './layout';
 import type { Stage } from './stage';
@@ -209,12 +210,17 @@ export class Board {
     return this.animating || this.processing;
   }
 
-  /** World position above a seat's head (or on its chest when `low`) for DOM name tags; null for the local player. */
-  seatAnchor(seat: number, out = new THREE.Vector3(), low = false): THREE.Vector3 | null {
+  /**
+   * World position for a seat's DOM name tag: above the head, or beside it when `side` is set
+   * (used when the head-top spot would collide with the HUD). Null for the local player.
+   */
+  seatAnchor(seat: number, out = new THREE.Vector3(), side = false): THREE.Vector3 | null {
     if (!this.room || seat >= this.n) return null;
     const v = this.viewOf(seat);
     if (seat === this.mySeat) return null;
-    return out.copy(avatarPosition(v, this.n)).setY(low ? 1.2 : 5.75);
+    out.copy(avatarPosition(v, this.n));
+    if (!side) return out.setY(5.75);
+    return out.addScaledVector(viewRight(v, this.n), -2.6).setY(3.4);
   }
 
   avatarFor(seat: number): Avatar | null {

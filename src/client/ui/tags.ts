@@ -181,10 +181,11 @@ export class SeatTags {
       tag.el.style.visibility = '';
       let x = Math.max(70, Math.min(this.stage.width - 70, p2.x));
       let y = Math.max(46, p2.y);
-      // If the tag would sit under the top HUD, drop it onto the player's chest instead.
-      if (this.overlapsHud(x, y, tag.el.offsetWidth || 150, tag.el.offsetHeight || 40) && this.board.seatAnchor(s, this.tmp, true)) {
+      // If the tag would sit under the top HUD, move it beside the player's head instead.
+      const tw = tag.el.offsetWidth || 150;
+      if (this.overlapsHud(x, y, tw, tag.el.offsetHeight || 40) && this.board.seatAnchor(s, this.tmp, true)) {
         p2 = this.stage.project(this.tmp, this.tmp2);
-        x = Math.max(70, Math.min(this.stage.width - 70, p2.x));
+        x = Math.max(tw / 2 + 6, Math.min(this.stage.width - tw / 2 - 6, p2.x));
         y = Math.max(this.hudBottom + 44, p2.y);
       }
       tag.el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -100%)`;

@@ -149,7 +149,9 @@ export class ResultsView {
         h(
           'div',
           { class: 'muted', style: 'text-align:center' },
-          `${room.seats[r.leftoverTo]?.name ?? '?'} took the last ${r.leftover.length} card${r.leftover.length > 1 ? 's' : ''} on the table.`,
+          `${r.leftoverTo === room.you.seat ? 'You' : (room.seats[r.leftoverTo]?.name ?? '?')} took ${
+            r.leftover.length > 1 ? `the last ${r.leftover.length} cards` : 'the last card'
+          } left on the table.`,
         ),
       );
     }
