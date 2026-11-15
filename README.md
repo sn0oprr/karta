@@ -1,0 +1,77 @@
+# Karta · كارطة
+
+**Tunisian card games online, with friends.** Karta starts with **Chkobba** (شكبّة), Tunisia's favourite café game, played on a cartoon 3D terrace in Sidi Bou Said. Rami and Belote are planned next.
+
+- **1 vs 1 or 2 vs 2.** In 2 vs 2, partners sit opposite each other.
+- **Private tables.** Create a table and invite friends with a share link (`/room/ABCDE`) or the 5-letter code.
+- **Spectators.** Anyone can watch with the link (`?watch=1`), or by joining a full table. Spectators can rotate the view and take over a bot's seat or an away player's seat.
+- **Voice chat.** Peer-to-peer WebRTC voice for players and spectators, with mute, deafen, per-person volume, push-to-talk (hold **V**), and avatar mouths that move when people talk.
+- **Bots** in three levels (easy, normal, hard) to fill empty seats. A bot also plays for anyone who drops out, until they reconnect.
+- **Quality of life:** an optional turn timer, reconnecting to your seat after a refresh, text chat, quick Tunisian reactions ("Ya3tik sa77a!", "Mabrouk!"), a rules screen, and procedural sound effects (darbuka on a chkobba!).
+- **All art is drawn in code.** Card faces (figures wearing a chechia, a golden 7♦), the terrace, the avatars and the sounds need no external assets.
+
+## Chkobba rules implemented
+
+40-card deck, with Queen = 8, Jack = 9 and King = 10. Each player gets 3 cards and 4 go face up on the table. If 3 or more of those table cards share a rank, the cards are redealt. Play goes anticlockwise and the deal passes to the right.
+
+You must capture when you can. A card of the same rank must be taken before any combination that adds up to your card's value. Sweeping the table is a **chkobba** (1 point), except with the last card of the hand. Cards left on the table at the end go to whoever captured last.
+
+At the end of each hand, one point each goes to:
+- **Karta:** most cards; 20–20 scores nothing.
+- **Dinari:** most diamonds; 5–5 scores nothing.
+- **Bermila:** most 7s, then most 6s if tied.
+- **Sab'a el Haya:** the 7♦.
+
+Each chkobba adds one more point. Games go to 11, 21 or 31. If both sides reach the target, the higher score wins; a tie plays another hand.
+
+## Run it
+
+```bash
+npm install
+npm run dev          # game server on :3000 + Vite on :5173 (proxied)
+```
+
+Open http://localhost:5173, create a table, and open the invite link in another browser (or a private window) to play against yourself. You can also add bots.
+
+```bash
+npm test             # rules engine, bots, and a multiplayer server suite over real sockets
+npm run typecheck
+npm run build        # client → dist/client, server → dist/server
+npm start            # production server (serves the client too) on $PORT (default 3000)
+```
+
+### Docker
+
+```bash
+docker build -t karta .
+docker run -p 3000:3000 karta
+```
+
+## Deploying
+
+Karta needs a long-running Node process with WebSockets. Render, Fly.io, Railway, a VPS or any container host works. Serverless platforms (for example Vercel functions) do not, because they can't keep the Socket.IO connections open.
+
+| Variable | Purpose |
+| --- | --- |
+| `PORT` | HTTP port (default `3000`) |
+| `STUN_URLS` | Comma-separated STUN URLs (default: Google's public STUN) |
+| `TURN_URLS`, `TURN_USERNAME`, `TURN_CREDENTIAL` | A TURN server for voice chat behind strict NATs or firewalls (recommended in production) |
+| `ICE_SERVERS_JSON` | Full `RTCIceServer[]` JSON. Overrides the STUN and TURN variables above |
+| `CORS_ORIGIN` | Only if the client is served from a different origin |
+
+Voice audio flows directly between browsers (a mesh, up to 12 people per table). Without TURN, players behind symmetric NATs (some mobile networks and corporate Wi-Fi) may not hear each other. A TURN server such as coturn or a hosted TURN service fixes that. Browsers only allow microphone access on `https://` or `localhost`.
+
+## How it's built
+
+```
+src/shared/   rules engine (chkobba.ts), deck (cards.ts), bots (bot.ts), socket protocol (protocol.ts)
+src/server/   Express + Socket.IO: rooms, seats, spectators, game flow, timers, bots, voice signaling
+src/client/
+  game3d/     Three.js scene: terrace, table, card meshes and art, avatars, animation system, board controller
+  ui/         DOM overlay: home, lobby, HUD, name tags, results, chat, reactions, voice panel
+  voice.ts    WebRTC mesh voice chat
+  sfx.ts      WebAudio procedural sound effects
+test/         vitest: engine, bots, end-to-end server tests with socket.io-client
+```
+
+The server is authoritative. It deals with a cryptographically secure shuffle, checks every move, and sends each player only their own hand. Clients play back server events (deal, play, capture, chkobba, end of hand) as animations, then snap to the authoritative snapshot, so a refresh or reconnect always restores the table exactly.

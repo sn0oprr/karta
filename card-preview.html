@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Karta card preview</title>
+    <style>
+      :root {
+        --bg: #5f6f7a;
+        --bg-2: #4f5d67;
+        --text: #f4efe6;
+        --muted: #c9d3da;
+        --card-w: 160px;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 24px;
+        background: radial-gradient(circle at 30% 0%, var(--bg), var(--bg-2));
+        color: var(--text);
+        font-family: 'Fredoka', system-ui, sans-serif;
+      }
+      h1 {
+        font-family: 'Lilita One', 'Fredoka', system-ui, sans-serif;
+        font-weight: 400;
+        margin: 0 0 4px;
+        font-size: 28px;
+      }
+      h2 {
+        font-weight: 600;
+        font-size: 16px;
+        margin: 22px 0 10px;
+        color: var(--muted);
+      }
+      #stats {
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: flex-start;
+      }
+      .row canvas {
+        display: block;
+        filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.35));
+      }
+      .row.sheet canvas {
+        width: var(--card-w);
+        height: calc(var(--card-w) * 1.5);
+      }
+      .row.small {
+        gap: 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Karta — card art preview</h1>
+    <div id="stats">rendering…</div>
+    <div id="app"></div>
+    <script type="module" src="/src/client/dev/cardPreview.ts"></script>
+  </body>
+</html>
