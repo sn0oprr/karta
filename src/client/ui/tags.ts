@@ -75,9 +75,13 @@ export class SeatTags {
     return { el, pill, nameEl, icons, dot, flag, timer, timerCircle: fg, bubble: null, bubbleTimer: null, thinking };
   }
 
+  /** Call as each view arrives: its serverTime is stale by the time the board has animated it. */
+  syncClock(serverTime: number) {
+    this.clockOffset = Date.now() - serverTime;
+  }
+
   update(room: RoomView) {
     this.room = room;
-    this.clockOffset = Date.now() - room.serverTime;
     this.voiceMembers = new Map(room.voice.map((v) => [v.id, v.muted]));
     const n = room.seats.length;
     while (this.tags.length < n) this.tags.push(this.makeTag());

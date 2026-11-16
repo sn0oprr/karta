@@ -253,6 +253,7 @@ class App {
   }
 
   private onRoomMessage(m: RoomMessage) {
+    this.tags.syncClock(m.room.serverTime);
     const first = !this.room || this.room.code !== m.room.code;
     const before = new Map((first ? [] : this.room!.seats).flatMap((p) => (p ? [[p.id, p.drink] as const] : [])));
     this.room = m.room;
@@ -281,7 +282,7 @@ class App {
     this.board.push(m);
     if (this.displayed) {
       // Keep connection/voice indicators fresh even while animations are running.
-      this.tags.update({ ...this.displayed, seats: m.room.seats, voice: m.room.voice, hostId: m.room.hostId, serverTime: m.room.serverTime });
+      this.tags.update({ ...this.displayed, seats: m.room.seats, voice: m.room.voice, hostId: m.room.hostId });
     }
   }
 
@@ -294,7 +295,7 @@ class App {
     this.hud.el.classList.toggle('in-lobby', inLobby);
     for (const el of this.hud.el.querySelectorAll<HTMLElement>('.scoreboard, .turn-banner')) el.classList.toggle('hidden', inLobby);
     if (inLobby) this.lobby.update(this.room ?? room);
-    this.hud.update(room, { myTurnReady: this.board.myTurnReady, busy: this.board.isAnimating });
+    this.hud.update(room, { myTurnReady: this.board.myTurnReady, busy: this.board.isAnimating, clockOffset: this.tags.offset });
     this.results.sync(room, this.tags.offset);
     if (room.phase === 'gameOver' && prevPhase !== 'gameOver') this.board.celebrateWinner(room);
 
@@ -304,7 +305,7 @@ class App {
       if (document.hidden) this.flashTitle();
     }
     this.wasMyTurn = myTurn;
-    setTimeout(() => this.hud.update(room, { myTurnReady: this.board.myTurnReady, busy: false }), 50);
+    setTimeout(() => this.hud.update(room, { myTurnReady: this.board.myTurnReady, busy: false, clockOffset: this.tags.offset }), 50);
   }
 
   private cafeOpen = false;

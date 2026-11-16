@@ -112,10 +112,12 @@ export class Hud {
 
   private bannerText = '';
   private deadline: number | null = null;
+  private turnSeconds = 0;
 
   private tickCountdown() {
     if (this.deadline === null) return;
-    const left = Math.max(0, Math.ceil((this.deadline - Date.now()) / 1000));
+    // The server starts the clock once the table has finished animating; until then, show the full time.
+    const left = Math.max(0, Math.min(this.turnSeconds, Math.ceil((this.deadline - Date.now()) / 1000)));
     this.banner.textContent = `${this.bannerText}  ⏱ ${left}s`;
     this.banner.classList.toggle('urgent', left <= 5);
   }
@@ -145,7 +147,7 @@ export class Hud {
   }
 
   /** Updates scores / banner from the room as displayed on the board. */
-  update(room: RoomView, opts: { myTurnReady: boolean; busy: boolean }) {
+  update(room: RoomView, opts: { myTurnReady: boolean; busy: boolean; clockOffset: number }) {
     this.code = room.code;
     this.codeChip.textContent = `# ${room.code}`;
     const g = room.game;
@@ -193,7 +195,8 @@ export class Hud {
       this.banner.classList.toggle('mine', mine);
       this.banner.classList.toggle('hidden-soft', !text);
     }
-    this.deadline = mine && g?.turnDeadline ? g.turnDeadline + (Date.now() - room.serverTime) : null;
+    this.deadline = mine && g?.turnDeadline ? g.turnDeadline + opts.clockOffset : null;
+    this.turnSeconds = room.settings.turnSeconds;
     this.tickCountdown();
 
     // Spectator controls.
