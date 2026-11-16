@@ -348,6 +348,7 @@ export function showRules() {
       null,
       h('li', null, 'Hover a card to preview what it captures; click to play it. On touch screens: tap to select, tap again to play.'),
       h('li', null, 'Keys ', h('span', { class: 'kbd' }, '1'), ' ', h('span', { class: 'kbd' }, '2'), ' ', h('span', { class: 'kbd' }, '3'), ' select a card, ', h('span', { class: 'kbd' }, 'Enter'), ' plays it.'),
+      h('li', null, 'Tap your drink on the table (or press ', h('span', { class: 'kbd' }, 'D'), ') to take a sip — or a puff of chicha. Change your order and your character with the ☕ button.'),
       h('li', null, 'In voice chat, hold ', h('span', { class: 'kbd' }, 'V'), ' to talk while muted.'),
     ),
   );

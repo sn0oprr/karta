@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { CARD_H, CARD_W } from './cardMesh';
+import { FLOOR_Y } from './environment';
 
 export const SEAT_RADIUS = 7.0;
 export const AVATAR_Y = 0.35;
@@ -37,6 +38,26 @@ export function deckPosition(view: number, n: number): THREE.Vector3 {
   return viewDir(view, n)
     .multiplyScalar(n === 2 ? 3.45 : 3.75)
     .add(viewRight(view, n).multiplyScalar(n === 2 ? -2.9 : -2.05));
+}
+
+/** A point `r` from the centre, `angle` radians from the player's direction toward their left. */
+function frontLeft(view: number, n: number, r: number, angle: number): THREE.Vector3 {
+  return viewDir(view, n)
+    .multiplyScalar(r * Math.cos(angle))
+    .add(viewRight(view, n).multiplyScalar(-r * Math.sin(angle)));
+}
+
+/**
+ * A player's cup or glass: on the table, front-left of their seat, between their stock spot and
+ * the next player's pile (with 4 players, each table diagonal belongs to one player).
+ */
+export function drinkPosition(view: number, n: number): THREE.Vector3 {
+  return n === 2 ? frontLeft(view, n, 4.3, 1.12) : frontLeft(view, n, 4.5, Math.PI / 4);
+}
+
+/** A chicha stands on the floor just outside the table, front-left of its smoker. */
+export function chichaPosition(view: number, n: number): THREE.Vector3 {
+  return frontLeft(view, n, 6.35, 0.9).setY(FLOOR_Y);
 }
 
 /** Where the turn indicator arc sits (table rim in front of the player). */

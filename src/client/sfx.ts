@@ -114,6 +114,32 @@ class Sfx {
     src.stop(start + dur + 0.05);
   }
 
+  /** Plays part of a decoded clip through the effects bus, so the volume and mute settings apply. */
+  playBuffer(buffer: AudioBuffer, o: { offset: number; duration: number; gain: number; pan?: number }): boolean {
+    if (!this.ctx || !this.master || this.muted || document.hidden) return false;
+    const ctx = this.ctx;
+    const t = ctx.currentTime + 0.01;
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    const g = ctx.createGain();
+    const fadeOut = Math.min(0.3, o.duration / 3);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(o.gain, t + 0.03);
+    g.gain.setValueAtTime(o.gain, t + o.duration - fadeOut);
+    g.gain.linearRampToValueAtTime(0, t + o.duration);
+    src.connect(g);
+    let out: AudioNode = g;
+    if (o.pan && typeof ctx.createStereoPanner === 'function') {
+      const panner = ctx.createStereoPanner();
+      panner.pan.value = Math.max(-1, Math.min(1, o.pan));
+      g.connect(panner);
+      out = panner;
+    }
+    out.connect(this.master);
+    src.start(t, o.offset, o.duration + 0.05);
+    return true;
+  }
+
   /** Darbuka hits: "doum" (low) and "tek" (high). */
   private doum(t: number, gain = 0.5) {
     this.tone(150, t, 0.28, { gain, to: 70 });

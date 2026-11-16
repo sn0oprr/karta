@@ -1,0 +1,28 @@
+# Karta: one container, the Express + Socket.IO server serving the built client. Game state lives in memory
+# (no database), so a restart ends the tables in progress.
+#
+# Local:      docker compose up -d --build            → http://localhost:3000
+# On radyou:  ~/bin/deploy-karta.sh, with KARTA_BIND=127.0.0.1:3510 in /opt/games/karta/.env (Caddy proxies
+#             karta.gamez.tn to it).
+name: karta
+
+services:
+  karta:
+    build: .
+    image: karta
+    restart: unless-stopped
+    ports:
+      # Behind a reverse proxy on the same machine, bind to loopback only, e.g. KARTA_BIND=127.0.0.1:3510.
+      - "${KARTA_BIND:-3000}:3000"
+    environment:
+      # Voice chat (WebRTC). The server defaults to Google's public STUN; add a TURN server for players behind
+      # strict NATs, or pass the full RTCIceServer[] list in ICE_SERVERS_JSON.
+      TURN_URLS: "${TURN_URLS:-}"
+      TURN_USERNAME: "${TURN_USERNAME:-}"
+      TURN_CREDENTIAL: "${TURN_CREDENTIAL:-}"
+      ICE_SERVERS_JSON: "${ICE_SERVERS_JSON:-}"
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "3"

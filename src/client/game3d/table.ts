@@ -87,41 +87,6 @@ function eightStar(ctx: CanvasRenderingContext2D, x: number, y: number, rOuter: 
   ctx.closePath();
 }
 
-function teaGlass(): THREE.Group {
-  const g = new THREE.Group();
-  const glassMat = new THREE.MeshPhongMaterial({
-    color: '#e8f6ff',
-    transparent: true,
-    opacity: 0.38,
-    shininess: 90,
-    specular: '#ffffff',
-    depthWrite: false,
-  });
-  const glass = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.27, 0.95, 16, 1, true), glassMat);
-  glass.position.y = 0.475;
-  g.add(glass);
-  const tea = new THREE.Mesh(new THREE.CylinderGeometry(0.31, 0.26, 0.7, 16), toon('#b8541b', { transparent: true, opacity: 0.92 }));
-  tea.position.y = 0.37;
-  g.add(tea);
-  const foam = new THREE.Mesh(new THREE.CylinderGeometry(0.31, 0.31, 0.05, 16), toon('#f2c98a'));
-  foam.position.y = 0.73;
-  g.add(foam);
-  // Mint sprig.
-  const leafMat = toon('#3fae4f');
-  for (let i = 0; i < 3; i++) {
-    const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6), leafMat);
-    leaf.scale.set(1, 0.4, 1.8);
-    const a = (i / 3) * Math.PI * 2;
-    leaf.position.set(Math.cos(a) * 0.09, 0.82 + i * 0.03, Math.sin(a) * 0.09);
-    leaf.rotation.y = a;
-    g.add(leaf);
-  }
-  g.traverse((o) => {
-    if (o instanceof THREE.Mesh) o.castShadow = true;
-  });
-  return g;
-}
-
 function teapot(): THREE.Group {
   const g = new THREE.Group();
   const metal = new THREE.MeshStandardMaterial({ color: '#d9c58f', metalness: 0.85, roughness: 0.28 });
@@ -218,13 +183,7 @@ export class Table {
     pedestal.position.y = FLOOR_Y + 5.6 - 0.0;
     this.group.add(pedestal);
 
-    // Tea for everyone, and a teapot.
-    const glassSpots = [Math.PI * 0.25, Math.PI * 0.75, Math.PI * 1.25, Math.PI * 1.75];
-    for (const a of glassSpots) {
-      const tg = teaGlass();
-      tg.position.set(Math.cos(a) * 4.35, 0, Math.sin(a) * 4.35);
-      this.group.add(tg);
-    }
+    // A teapot for the table (each player's own order stands in front of them).
     const pot = teapot();
     pot.position.set(Math.cos(-Math.PI * 0.62) * 4.05, 0, Math.sin(-Math.PI * 0.62) * 4.05);
     pot.rotation.y = 0.6;

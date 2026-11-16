@@ -1,0 +1,66 @@
+# Deploys main to the production server (radyou.tn) on every push, or by hand from the Actions tab.
+#
+# The job only opens an SSH connection as `ubuntu`. Its key is a forced-command key on the server: whatever is sent,
+# it runs /home/ubuntu/bin/deploy-karta.sh, which fast-forwards /opt/games/karta to origin/main (the server pulls with
+# its own read-only deploy key), rebuilds the Docker image (Vite client + Express/Socket.IO server) and restarts the
+# container (compose project karta) on 127.0.0.1:3510. A failed build leaves the running container untouched.
+# Game state is in memory only, so a deploy ends the tables in progress. The host Caddy proxies karta.gamez.tn to it.
+#
+# Settings → Environments → production (deployments from main only):
+#   secrets   DEPLOY_SSH_KEY      private ed25519 key (public half in the server's ~/.ssh/authorized_keys)
+#             DEPLOY_KNOWN_HOSTS  `ssh-keyscan radyou.tn` output, so the host key is checked
+#   variables DEPLOY_HOST (radyou.tn), DEPLOY_USER (ubuntu)
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    # docs only: nothing to deploy
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.claude/**'
+  workflow_dispatch:
+
+# One deploy at a time; a newer push waits for the running one.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://karta.gamez.tn
+    timeout-minutes: 20
+    steps:
+      - name: Set up SSH
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Deploy on the server
+        env:
+          TARGET: ${{ vars.DEPLOY_USER }}@${{ vars.DEPLOY_HOST }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o ServerAliveInterval=30 "$TARGET" deploy
+
+      - name: Check the public site
+        run: |
+          for url in https://karta.gamez.tn/ https://karta.gamez.tn/api/health; do
+            curl -fsS -o /dev/null -w "$url -> %{http_code}\n" --retry 5 --retry-delay 5 "$url"
+          done
+
+      - name: Remove the key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

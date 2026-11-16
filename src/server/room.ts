@@ -13,8 +13,11 @@ import {
   AVATAR_COLORS,
   BOT_LEVELS,
   CHAT_MAX,
+  type CharacterId,
   type ChatMessage,
   type ClientToServer,
+  DRINKS,
+  type DrinkId,
   EMOTES,
   type EmoteId,
   type GameEvent,
@@ -24,6 +27,7 @@ import {
   type RoomSettings,
   type RoomView,
   type ServerToClient,
+  SKIN_TONES,
   TARGET_SCORES,
   TURN_TIMERS,
   seatCount,
@@ -32,10 +36,17 @@ import {
 export type IO = Server<ClientToServer, ServerToClient>;
 export type Sock = Socket<ClientToServer, ServerToClient>;
 
-export interface Member {
-  id: string;
+/** What a player chose about themselves: name, shirt colour, character, skin tone and drink. */
+export interface MemberProfile {
   name: string;
   color: number;
+  character: CharacterId;
+  skin: number;
+  drink: DrinkId;
+}
+
+export interface Member extends MemberProfile {
+  id: string;
   bot: boolean;
   socket: Sock | null;
   connected: boolean;
@@ -43,6 +54,7 @@ export interface Member {
   disconnectTimer: ReturnType<typeof setTimeout> | null;
   chatTimes: number[];
   lastEmote: number;
+  lastSip: number;
 }
 
 type InternalEvent =
@@ -82,22 +94,37 @@ export const TIMING = {
   botsOnlyPause: 7000,
 };
 
-const BOT_NAMES = [
-  'Am Hamadi',
-  'Khalti Zohra',
-  'Si Lamine',
-  'Hamma',
-  'Baya',
-  'Mongi',
-  'Nefissa',
-  'Chedly',
-  'Monia',
-  'Taoufik',
-  'Fatma',
-  'Sboui',
+/** Sipping pace (kept apart from TIMING, which tests shrink to make games fast). */
+export const SIP_TIMING = {
+  /** Minimum gap between two sips of the same player (the client animation is longer). */
+  cooldown: 1200,
+  /** How often the room considers letting a bot sip its drink. */
+  botTick: 9000,
+  /** Chance that one of the bots sips on a tick. */
+  botChance: 0.45,
+};
+
+/** Bots, with the characters that suit their names. */
+const BOTS: { name: string; looks: CharacterId[] }[] = [
+  { name: 'Am Hamadi', looks: ['hajj'] },
+  { name: 'Khalti Zohra', looks: ['hajja'] },
+  { name: 'Si Lamine', looks: ['patron', 'wled'] },
+  { name: 'Hamma', looks: ['wled', 'sportif'] },
+  { name: 'Baya', looks: ['lella', 'nejma', 'taleba'] },
+  { name: 'Mongi', looks: ['patron', 'hajj'] },
+  { name: 'Nefissa', looks: ['lella', 'taleba'] },
+  { name: 'Chedly', looks: ['wled', 'sportif', 'patron'] },
+  { name: 'Monia', looks: ['nejma', 'lella'] },
+  { name: 'Taoufik', looks: ['wled', 'patron'] },
+  { name: 'Fatma', looks: ['hajja', 'lella'] },
+  { name: 'Sboui', looks: ['sportif', 'wled'] },
 ];
 
 let chatSeq = 1;
+
+function pickProfile(p: MemberProfile): MemberProfile {
+  return { name: p.name, color: p.color, character: p.character, skin: p.skin, drink: p.drink };
+}
 
 export function eventDuration(ev: InternalEvent, numPlayers: number): number {
   switch (ev.kind) {
@@ -152,6 +179,7 @@ export class Room {
   private ready = new Set<string>();
   private lastPlay: PlayInfo | null = null;
   private botNameIdx: number;
+  private sipTicker: ReturnType<typeof setInterval>;
   private destroyed = false;
 
   constructor(
@@ -164,7 +192,9 @@ export class Room {
     this.hostId = hostId;
     this.settings = settings;
     this.seats = Array.from({ length: seatCount(settings.mode) }, () => null);
-    this.botNameIdx = Math.floor(deps.rand() * BOT_NAMES.length);
+    this.botNameIdx = Math.floor(deps.rand() * BOTS.length);
+    this.sipTicker = setInterval(() => this.botSip(), SIP_TIMING.botTick);
+    this.sipTicker.unref?.();
   }
 
   // ───────────────────────────── membership ─────────────────────────────
@@ -183,7 +213,7 @@ export class Room {
   }
 
   /** Adds (or re-attaches) a human. Returns the member. */
-  join(id: string, profile: { name: string; color: number }, socket: Sock, spectate: boolean): Member {
+  join(id: string, profile: MemberProfile, socket: Sock, spectate: boolean): Member {
     if (this.banned.has(id)) throw new RoomError('You were removed from this room.');
     this.touch();
     let member = this.members.get(id);
@@ -194,8 +224,7 @@ export class Room {
         void member.socket.leave(this.code);
       }
       member.socket = socket;
-      member.name = profile.name;
-      member.color = profile.color;
+      Object.assign(member, pickProfile(profile));
       const wasAway = !member.connected;
       member.connected = true;
       if (member.disconnectTimer) clearTimeout(member.disconnectTimer);
@@ -211,8 +240,7 @@ export class Room {
     } else {
       member = {
         id,
-        name: profile.name,
-        color: profile.color,
+        ...pickProfile(profile),
         bot: false,
         socket,
         connected: true,
@@ -220,6 +248,7 @@ export class Room {
         disconnectTimer: null,
         chatTimes: [],
         lastEmote: 0,
+        lastSip: 0,
       };
       this.members.set(id, member);
       const free = this.seats.findIndex((s) => s === null);
@@ -265,8 +294,8 @@ export class Room {
         if (member.connected || this.destroyed) return;
         member.autopilot = true;
         this.system(`${member.name} is away — playing on autopilot.`);
-        this.broadcast();
         if (this.phase === 'playing' && this.game?.turn === this.seatOf(id)) this.scheduleTurn();
+        this.broadcast();
         if (this.phase === 'roundOver') this.maybeStartNextRound();
       }, TIMING.autopilotGrace);
     } else {
@@ -344,11 +373,10 @@ export class Room {
     if (this.connectedHumans().length === 0) this.deps.onEmpty(this);
   }
 
-  updateProfile(id: string, profile: { name: string; color: number }) {
+  updateProfile(id: string, profile: MemberProfile) {
     const m = this.members.get(id);
     if (!m) return;
-    m.name = profile.name;
-    m.color = profile.color;
+    Object.assign(m, pickProfile(profile));
     if (this.seatOf(id) !== null) this.ensureDistinctColor(m);
     this.broadcast();
   }
@@ -446,7 +474,9 @@ export class Room {
   }
 
   private makeBot(preferredColor?: number): Member {
-    const name = BOT_NAMES[this.botNameIdx++ % BOT_NAMES.length]!;
+    const rand = this.deps.rand;
+    const pick = <T>(list: readonly T[]): T => list[Math.floor(rand() * list.length)]!;
+    const persona = BOTS[this.botNameIdx++ % BOTS.length]!;
     const used = new Set(this.seats.filter(Boolean).map((s) => s!.color));
     let color = preferredColor ?? 0;
     if (preferredColor === undefined || used.has(color)) {
@@ -459,9 +489,12 @@ export class Room {
       }
     }
     return {
-      id: `bot-${this.code}-${Math.floor(this.deps.rand() * 1e9).toString(36)}`,
-      name,
+      id: `bot-${this.code}-${Math.floor(rand() * 1e9).toString(36)}`,
+      name: persona.name,
       color,
+      character: pick(persona.looks),
+      skin: Math.floor(rand() * SKIN_TONES.length),
+      drink: pick(DRINKS).id,
       bot: true,
       socket: null,
       connected: true,
@@ -469,6 +502,7 @@ export class Room {
       disconnectTimer: null,
       chatTimes: [],
       lastEmote: 0,
+      lastSip: 0,
     };
   }
 
@@ -527,8 +561,7 @@ export class Room {
     this.busyUntil = Date.now();
     const deal = this.game.startRound();
     this.system(`New game — first to ${this.settings.targetScore} points. Yalla!`);
-    this.emitEvents([{ kind: 'gameStart' }, { kind: 'deal', deal }]);
-    this.scheduleTurn();
+    this.advance([{ kind: 'gameStart' }, { kind: 'deal', deal }]);
   }
 
   rematch(id: string) {
@@ -594,8 +627,7 @@ export class Room {
       events.push({ kind: 'roundEnd', result: out.round });
       this.onRoundEnd(out.round);
     }
-    this.emitEvents(events);
-    this.scheduleTurn();
+    this.advance(events);
     if (this.phase === 'roundOver') this.maybeStartNextRound();
   }
 
@@ -650,8 +682,7 @@ export class Room {
     this.lastPlay = null;
     this.busyUntil = Math.max(this.busyUntil, Date.now());
     const deal = this.game.startRound();
-    this.emitEvents([{ kind: 'deal', deal }]);
-    this.scheduleTurn();
+    this.advance([{ kind: 'deal', deal }]);
   }
 
   private clearActionTimer() {
@@ -743,6 +774,26 @@ export class Room {
     this.deps.io.to(this.code).emit('emote', { from: id, id: emoteId as EmoteId });
   }
 
+  /** A seated player sips their drink: everyone else sees and hears it (the sipper already animated it). */
+  sip(id: string) {
+    const member = this.members.get(id);
+    if (!member?.socket || this.seatOf(id) === null) return;
+    const now = Date.now();
+    if (now - member.lastSip < SIP_TIMING.cooldown) return;
+    member.lastSip = now;
+    member.socket.to(this.code).emit('sip', { from: id });
+  }
+
+  /** Now and then a bot enjoys its drink too, so the table feels alive. */
+  private botSip() {
+    if (this.destroyed || this.connectedHumans().length === 0) return;
+    const bots = this.seats.filter((s): s is Member => !!s?.bot);
+    if (bots.length === 0 || this.deps.rand() > SIP_TIMING.botChance) return;
+    const bot = bots[Math.floor(this.deps.rand() * bots.length)]!;
+    bot.lastSip = Date.now();
+    this.deps.io.to(this.code).emit('sip', { from: bot.id });
+  }
+
   voiceJoin(id: string, muted: boolean) {
     if (!this.members.has(id)) throw new RoomError('Not in this room.');
     if (!this.voice.has(id) && this.voice.size >= 12) throw new RoomError('Voice chat is full (12 people).');
@@ -781,12 +832,18 @@ export class Room {
     this.lastActivity = Date.now();
   }
 
-  private emitEvents(events: InternalEvent[]) {
+  /**
+   * Moves the table on after `events`: paces their animations, arms what comes next
+   * (bot move, turn deadline, next hand), then broadcasts. Arming first is what puts
+   * the new `turnDeadline` / `nextRoundAt` in the view the clients receive.
+   */
+  private advance(events: InternalEvent[]) {
     const n = this.seats.length;
     const now = Date.now();
     let busy = Math.max(now, this.busyUntil);
     for (const ev of events) busy += eventDuration(ev, n);
     this.busyUntil = busy;
+    this.scheduleTurn();
     this.broadcast(events);
   }
 
@@ -826,7 +883,17 @@ export class Room {
   }
 
   private playerInfo(m: Member): PlayerInfo {
-    return { id: m.id, name: m.name, color: m.color, bot: m.bot, connected: m.connected, autopilot: m.autopilot };
+    return {
+      id: m.id,
+      name: m.name,
+      color: m.color,
+      character: m.character,
+      skin: m.skin,
+      drink: m.drink,
+      bot: m.bot,
+      connected: m.connected,
+      autopilot: m.autopilot,
+    };
   }
 
   viewFor(viewerId: string): RoomView {
@@ -872,6 +939,7 @@ export class Room {
   destroy() {
     this.destroyed = true;
     this.clearActionTimer();
+    clearInterval(this.sipTicker);
     if (this.hostTimer) clearTimeout(this.hostTimer);
     for (const m of this.members.values()) {
       if (m.disconnectTimer) clearTimeout(m.disconnectTimer);

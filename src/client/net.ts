@@ -1,6 +1,10 @@
 import { io, type Socket } from 'socket.io-client';
-import type { ClientToServer, ServerToClient, Welcome } from '../shared/protocol';
+import type { ClientToServer, HandshakeAuth, Profile, ServerToClient, Welcome } from '../shared/protocol';
 import { profile } from './identity';
+
+function publicProfile(): Profile {
+  return { name: profile.name, color: profile.color, character: profile.character, skin: profile.skin, drink: profile.drink };
+}
 
 export type ClientSocket = Socket<ServerToClient, ClientToServer>;
 export type AckResult<T = object> = ({ ok: true } & T) | { ok: false; error: string };
@@ -11,8 +15,9 @@ export class Net {
   private welcomeWaiters: ((w: Welcome) => void)[] = [];
 
   constructor() {
+    const auth: HandshakeAuth = { secret: profile.secret, ...publicProfile() };
     this.socket = io({
-      auth: { secret: profile.secret, name: profile.name, color: profile.color },
+      auth,
       transports: ['websocket', 'polling'],
       reconnectionDelay: 600,
       reconnectionDelayMax: 4000,
@@ -47,9 +52,10 @@ export class Net {
     });
   }
 
+  /** Sends the local profile (name, colour, character, skin, drink) and keeps it for reconnections. */
   updateProfile() {
-    (this.socket.auth as Record<string, unknown>).name = profile.name;
-    (this.socket.auth as Record<string, unknown>).color = profile.color;
-    this.socket.emit('profile', { name: profile.name, color: profile.color });
+    const p = publicProfile();
+    Object.assign(this.socket.auth as Record<string, unknown>, p);
+    this.socket.emit('profile', p);
   }
 }

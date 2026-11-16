@@ -25,7 +25,7 @@ export function renderHome(actions: HomeActions, opts: { prefillCode?: string; s
   nameInput.addEventListener('input', () => {
     const v = nameInput.value.trim();
     if (v) {
-      saveProfile({ name: v.slice(0, NAME_MAX), named: true });
+      saveProfile({ name: v.slice(0, NAME_MAX), named: true, typed: true });
       actions.profileChanged();
     }
   });

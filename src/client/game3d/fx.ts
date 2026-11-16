@@ -129,3 +129,154 @@ export class Shockwave {
     if (this.t >= 1) this.mesh.visible = false;
   }
 }
+
+let puffTexture: THREE.CanvasTexture | null = null;
+
+/** Soft round puff used for smoke and steam (shared by every particle). */
+function smokeTexture(): THREE.CanvasTexture {
+  if (puffTexture) return puffTexture;
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const ctx = c.getContext('2d')!;
+  const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, 'rgba(255,255,255,1)');
+  g.addColorStop(0.45, 'rgba(255,255,255,0.75)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 64, 64);
+  puffTexture = new THREE.CanvasTexture(c);
+  puffTexture.colorSpace = THREE.SRGBColorSpace;
+  return puffTexture;
+}
+
+interface Puff {
+  sprite: THREE.Sprite;
+  mat: THREE.SpriteMaterial;
+  vel: THREE.Vector3;
+  life: number;
+  maxLife: number;
+  size0: number;
+  size1: number;
+  alpha: number;
+  sway: number;
+}
+
+interface Ring {
+  mesh: THREE.Mesh;
+  vel: THREE.Vector3;
+  life: number;
+}
+
+/** Chicha smoke (exhaled puffs and the odd smoke ring) and the steam over hot drinks. */
+export class Smoke {
+  private puffs: Puff[] = [];
+  private rings: Ring[] = [];
+  private cursor = 0;
+  private ringCursor = 0;
+  private tmpQ = new THREE.Quaternion();
+
+  constructor(parent: THREE.Object3D, count = 90) {
+    const tex = smokeTexture();
+    for (let i = 0; i < count; i++) {
+      const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, opacity: 0, color: '#ffffff' });
+      const sprite = new THREE.Sprite(mat);
+      sprite.visible = false;
+      sprite.raycast = () => {};
+      parent.add(sprite);
+      this.puffs.push({ sprite, mat, vel: new THREE.Vector3(), life: 1, maxLife: 1, size0: 1, size1: 1, alpha: 0, sway: 0 });
+    }
+    for (let i = 0; i < 3; i++) {
+      const mesh = new THREE.Mesh(
+        new THREE.TorusGeometry(0.34, 0.085, 8, 28),
+        new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0, depthWrite: false }),
+      );
+      mesh.visible = false;
+      mesh.raycast = () => {};
+      parent.add(mesh);
+      this.rings.push({ mesh, vel: new THREE.Vector3(), life: 1 });
+    }
+  }
+
+  /** One soft particle. */
+  emit(
+    pos: THREE.Vector3,
+    vel: THREE.Vector3,
+    o: { size?: [number, number]; life?: number; alpha?: number; color?: THREE.ColorRepresentation } = {},
+  ) {
+    const p = this.puffs[this.cursor]!;
+    this.cursor = (this.cursor + 1) % this.puffs.length;
+    p.sprite.position.copy(pos);
+    p.vel.copy(vel);
+    p.life = 0;
+    p.maxLife = o.life ?? 2.4;
+    [p.size0, p.size1] = o.size ?? [0.4, 1.8];
+    p.alpha = o.alpha ?? 0.6;
+    p.sway = Math.random() * Math.PI * 2;
+    p.mat.color.set(o.color ?? '#ffffff');
+    p.mat.rotation = Math.random() * Math.PI * 2;
+    p.sprite.visible = true;
+    p.sprite.scale.setScalar(p.size0);
+  }
+
+  /** A cloud breathed out from `from`, drifting along `dir`. */
+  exhale(from: THREE.Vector3, dir: THREE.Vector3, amount = 9, ring = false) {
+    const d = dir.clone().normalize();
+    for (let i = 0; i < amount; i++) {
+      const spread = new THREE.Vector3((Math.random() - 0.5) * 0.5, Math.random() * 0.35, (Math.random() - 0.5) * 0.5);
+      const speed = 1.3 + Math.random() * 1.1 - i * 0.06;
+      const v = d.clone().multiplyScalar(speed).add(spread).add(new THREE.Vector3(0, 0.45, 0));
+      this.emit(from.clone().addScaledVector(d, i * 0.05), v, {
+        size: [0.35 + Math.random() * 0.2, 1.7 + Math.random() * 1.1],
+        life: 2.2 + Math.random() * 1.2,
+        alpha: 0.55 + Math.random() * 0.2,
+        color: '#f4f1ff',
+      });
+    }
+    if (ring) {
+      const r = this.rings[this.ringCursor]!;
+      this.ringCursor = (this.ringCursor + 1) % this.rings.length;
+      r.mesh.position.copy(from).addScaledVector(d, 0.3);
+      r.vel.copy(d).multiplyScalar(1.15).add(new THREE.Vector3(0, 0.35, 0));
+      r.mesh.quaternion.copy(this.tmpQ.setFromUnitVectors(new THREE.Vector3(0, 0, 1), r.vel.clone().normalize()));
+      r.life = 0;
+      r.mesh.visible = true;
+    }
+  }
+
+  /** A faint wisp of steam rising from a hot glass. */
+  steam(from: THREE.Vector3, scale = 1) {
+    const v = new THREE.Vector3((Math.random() - 0.5) * 0.12, 0.55 + Math.random() * 0.25, (Math.random() - 0.5) * 0.12);
+    this.emit(from, v, { size: [0.18 * scale, 0.75 * scale], life: 1.7 + Math.random() * 0.6, alpha: 0.32 });
+  }
+
+  update(dt: number) {
+    for (const p of this.puffs) {
+      if (!p.sprite.visible) continue;
+      p.life += dt;
+      const t = p.life / p.maxLife;
+      if (t >= 1) {
+        p.sprite.visible = false;
+        continue;
+      }
+      p.vel.multiplyScalar(Math.pow(0.45, dt));
+      p.vel.y += 0.22 * dt;
+      p.sprite.position.addScaledVector(p.vel, dt);
+      p.sprite.position.x += Math.sin(p.life * 2.2 + p.sway) * 0.12 * dt;
+      p.sprite.scale.setScalar(p.size0 + (p.size1 - p.size0) * (1 - Math.pow(1 - t, 2)));
+      // Quick fade-in, slow fade-out.
+      p.mat.opacity = p.alpha * Math.min(1, t * 8) * (1 - t) * (1 - t * 0.3);
+    }
+    for (const r of this.rings) {
+      if (!r.mesh.visible) continue;
+      r.life += dt / 2.6;
+      if (r.life >= 1) {
+        r.mesh.visible = false;
+        continue;
+      }
+      r.vel.multiplyScalar(Math.pow(0.6, dt));
+      r.mesh.position.addScaledVector(r.vel, dt);
+      r.mesh.scale.setScalar(0.6 + r.life * 1.9);
+      (r.mesh.material as THREE.MeshBasicMaterial).opacity = 0.55 * Math.min(1, r.life * 6) * (1 - r.life);
+    }
+  }
+}
