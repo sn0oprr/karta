@@ -26,13 +26,12 @@ import {
   heldCardTransform,
   myHandTransform,
   pilePosition,
-  rimAngle,
   viewDir,
   viewRight,
   viewYaw,
 } from './layout';
 import type { Stage } from './stage';
-import { TABLE_EXTENT, TABLE_RADIUS, tableEdgePoints } from './table';
+import { FELT_HALF, FRAME_MID, FRAME_TOP, TABLE_EXTENT, tableEdgePoints } from './table';
 import { animator, ease, flatQuat, moveObject, standQuat, wait } from './tween';
 
 export interface BoardCallbacks {
@@ -101,7 +100,7 @@ export class Board {
   private piles: CardStack[] = [];
   private markers: CardObject[][] = [];
   private deck = new CardStack();
-  private turnArc: THREE.Mesh;
+  private turnBar: THREE.Mesh;
   private confetti: Confetti;
   private shockwave: Shockwave;
   private pool: CardObject[] = [];
@@ -139,12 +138,11 @@ export class Board {
     stage.camera.add(this.handGroup);
     this.group.add(this.deck.root);
 
-    const arcMat = new THREE.MeshBasicMaterial({ color: '#ffd84d', transparent: true, opacity: 0.9, toneMapped: false });
-    this.turnArc = new THREE.Mesh(new THREE.TorusGeometry(TABLE_RADIUS - 0.18, 0.09, 8, 48, Math.PI / 3.2), arcMat);
-    this.turnArc.rotation.x = Math.PI / 2;
-    this.turnArc.position.y = 0.3;
-    this.turnArc.visible = false;
-    this.group.add(this.turnArc);
+    // A glowing bar lying along the frame on the side of the player whose turn it is.
+    const barMat = new THREE.MeshBasicMaterial({ color: '#ffd84d', transparent: true, opacity: 0.9, toneMapped: false });
+    this.turnBar = new THREE.Mesh(new THREE.CapsuleGeometry(0.11, FELT_HALF * 1.3, 4, 12), barMat);
+    this.turnBar.visible = false;
+    this.group.add(this.turnBar);
 
     this.confetti = new Confetti(stage.scene);
     this.shockwave = new Shockwave(stage.scene);
@@ -581,7 +579,7 @@ export class Board {
     for (const list of this.markers) for (const c of list) this.release(c);
     this.markers = [];
     this.deck.setCount(0);
-    this.turnArc.visible = false;
+    this.turnBar.visible = false;
   }
 
   private showDecorativeDeck() {
@@ -770,12 +768,13 @@ export class Board {
   private syncTurn(room: RoomView) {
     const g = room.game;
     if (!g || room.phase !== 'playing') {
-      this.turnArc.visible = false;
+      this.turnBar.visible = false;
     } else {
       const v = this.viewOf(g.turn);
-      this.turnArc.visible = true;
-      const a = rimAngle(v, this.n);
-      this.turnArc.rotation.z = -a - Math.PI / 6.4;
+      this.turnBar.visible = true;
+      this.turnBar.position.copy(viewDir(v, this.n)).multiplyScalar(FRAME_MID).setY(FRAME_TOP + 0.05);
+      // The capsule's axis (y) laid flat along the player's side of the frame.
+      this.turnBar.rotation.set(0, viewYaw(v, this.n), Math.PI / 2);
       // Avatars look at the player whose turn it is.
       const target = avatarPosition(v, this.n).setY(2.5);
       for (let s = 0; s < this.n; s++) {
@@ -1236,9 +1235,9 @@ export class Board {
     this.shockwave.update(dt);
     this.smoke.update(dt);
 
-    // Turn arc pulse.
-    if (this.turnArc.visible) {
-      const m = this.turnArc.material as THREE.MeshBasicMaterial;
+    // Turn bar pulse.
+    if (this.turnBar.visible) {
+      const m = this.turnBar.material as THREE.MeshBasicMaterial;
       m.opacity = 0.55 + Math.sin(time * 4) * 0.35;
     }
     // Gentle pulse on capture previews.

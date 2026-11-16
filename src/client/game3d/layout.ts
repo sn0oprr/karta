@@ -49,21 +49,15 @@ function frontLeft(view: number, n: number, r: number, angle: number): THREE.Vec
 
 /**
  * A player's cup or glass: on the table, front-left of their seat, between their stock spot and
- * the next player's pile (with 4 players, each table diagonal belongs to one player).
+ * the next player's pile (with 4 players, each corner of the table belongs to one player).
  */
 export function drinkPosition(view: number, n: number): THREE.Vector3 {
-  return n === 2 ? frontLeft(view, n, 4.3, 1.12) : frontLeft(view, n, 4.5, Math.PI / 4);
+  return n === 2 ? frontLeft(view, n, 4.3, 1.12) : frontLeft(view, n, 5.2, Math.PI / 4);
 }
 
-/** A chicha stands on the floor just outside the table, front-left of its smoker. */
+/** A chicha stands on the floor just outside the table's corner, front-left of its smoker. */
 export function chichaPosition(view: number, n: number): THREE.Vector3 {
-  return frontLeft(view, n, 6.35, 0.9).setY(FLOOR_Y);
-}
-
-/** Where the turn indicator arc sits (table rim in front of the player). */
-export function rimAngle(view: number, n: number): number {
-  const d = viewDir(view, n);
-  return Math.atan2(d.z, d.x);
+  return frontLeft(view, n, 6.2 * Math.SQRT2, Math.PI / 4).setY(FLOOR_Y);
 }
 
 // ───────────────────────────── table slots ─────────────────────────────
