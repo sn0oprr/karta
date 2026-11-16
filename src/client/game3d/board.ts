@@ -14,7 +14,7 @@ import {
   type RoomView,
 } from '../../shared/protocol';
 import { Avatar, buildChair } from './avatar';
-import { CARD_H, CARD_T, CardObject, CardStack } from './cardMesh';
+import { CARD_H, CARD_T, CARD_W, CardObject, CardStack } from './cardMesh';
 import { DrinkProp, type Drinker, avatarDrinker, performSip } from './drinks';
 import { Confetti, Shockwave, Smoke } from './fx';
 import {
@@ -24,6 +24,7 @@ import {
   deckPosition,
   drinkPosition,
   heldCardTransform,
+  myHandRect,
   myHandTransform,
   pilePosition,
   viewDir,
@@ -33,6 +34,7 @@ import {
 import type { Stage } from './stage';
 import { FELT_HALF, FRAME_MID, FRAME_TOP, TABLE_EXTENT, tableEdgePoints } from './table';
 import { animator, ease, flatQuat, moveObject, standQuat, wait } from './tween';
+import { type Ball, type Pt2, type Pt3, type Rect, fitSeatView } from './viewFit';
 
 export interface BoardCallbacks {
   /** The local player wants to play a move. Resolve false if the server refused it. */
@@ -69,6 +71,30 @@ const HELD_SCALE = 0.62;
 const tmpV = new THREE.Vector3();
 const tmpV2 = new THREE.Vector3();
 const tmpQ = new THREE.Quaternion();
+
+/** Everywhere a table card can lie (every slot, plus the card's size), as a rectangle on the felt. */
+const CARD_AREA: Pt3[] = (() => {
+  let x = 0;
+  let z = 0;
+  for (const s of TABLE_SLOTS) {
+    x = Math.max(x, Math.abs(s.pos.x));
+    z = Math.max(z, Math.abs(s.pos.z));
+  }
+  x += CARD_W / 2 + 0.08;
+  z += CARD_H / 2 + 0.08;
+  return [
+    { x: -x, y: 0, z: -z },
+    { x, y: 0, z: -z },
+    { x, y: 0, z },
+    { x: -x, y: 0, z },
+  ];
+})();
+
+/** A ball around a seated avatar's head (ears, hair and hats included; buns and curls stick out back). */
+function headBall(view: number, n: number): Ball {
+  const c = avatarPosition(view, n).addScaledVector(viewDir(view, n), 0.1 * AVATAR_SCALE);
+  return { center: { x: c.x, y: c.y + 2.4 * AVATAR_SCALE, z: c.z }, radius: 1.38 * AVATAR_SCALE };
+}
 
 export class Board {
   private stage: Stage;
@@ -150,8 +176,12 @@ export class Board {
 
     stage.onFrame((dt, t) => this.update(dt, t));
     stage.onResize(() => {
-      this.layoutHand(false);
       if (this.cameraMode === 'seat') this.setCamera('seat', true);
+      this.layoutHand(false);
+    });
+    // The HUD changed shape (the scoreboard appeared, fonts loaded…): glide to a new framing.
+    stage.onLayout(() => {
+      if (this.cameraMode === 'seat') this.setCamera('seat');
     });
     this.setupInput();
     this.showDecorativeDeck();
@@ -241,16 +271,18 @@ export class Board {
   }
 
   /**
-   * World position for a seat's DOM name tag: above the head, or beside it when `side` is set
-   * (used when the head-top spot would collide with the HUD). Null for the local player.
+   * Screen box (CSS px) around a seat's head, which its DOM name tag is placed around. Null for
+   * the local player, or when the head is behind the camera.
    */
-  seatAnchor(seat: number, out = new THREE.Vector3(), side = false): THREE.Vector3 | null {
-    if (!this.room || seat >= this.n) return null;
-    const v = this.viewOf(seat);
-    if (seat === this.mySeat) return null;
-    out.copy(avatarPosition(v, this.n));
-    if (!side) return out.setY(5.75);
-    return out.addScaledVector(viewRight(v, this.n), -2.6).setY(3.4);
+  seatHeadRect(seat: number): Rect | null {
+    if (!this.room || seat >= this.n || seat === this.mySeat) return null;
+    const cam = this.stage.camera;
+    const { center, radius } = headBall(this.viewOf(seat), this.n);
+    const depth = -tmpV.set(center.x, center.y, center.z).applyMatrix4(cam.matrixWorldInverse).z;
+    const p = this.stage.project(tmpV2.set(center.x, center.y, center.z), tmpV2);
+    if (p.z > 1 || depth <= 0) return null;
+    const r = (radius / (depth * Math.tan(THREE.MathUtils.degToRad(cam.fov / 2)))) * 0.5 * this.stage.height;
+    return { left: p.x - r, top: p.y - r, right: p.x + r, bottom: p.y + r };
   }
 
   avatarFor(seat: number): Avatar | null {
@@ -1142,57 +1174,65 @@ export class Board {
     this.camFrom.target.copy(this.camTarget);
     this.camFrom.fov = cam.fov;
     this.cameraMode = mode;
+    const prevFov = this.camFov;
     if (mode === 'seat') this.fitSeatCamera();
     this.camBlend = instant ? 1 : 0;
     if (instant) this.applyCamera(1);
+    // The hand lives in camera space, sized for the camera's field of view.
+    if (mode === 'seat' && Math.abs(this.camFov - prevFov) > 0.01) this.layoutHand(!instant);
   }
 
-  /** Finds a camera distance that keeps the table, the opponents and the HUD-safe areas in view. */
+  /**
+   * Searches pitch, field of view, aim and distance for the view that shows the table cards
+   * biggest while every opponent's face stays on screen, the far side of the table shows, and
+   * neither the cards nor the faces hide under the HUD or the hand. The near part of the table may
+   * be cut by the screen edges or hidden by the hand.
+   */
   private fitSeatCamera() {
-    const aspect = this.stage.width / Math.max(1, this.stage.height);
+    const W = Math.max(1, this.stage.width);
+    const H = Math.max(1, this.stage.height);
+    const aspect = W / H;
     const portrait = aspect < 0.8;
-    const square = !portrait && aspect < 1.25;
     const spectating = this.mySeat === null;
-    const fov = portrait ? 54 : square ? 44 : 38;
-    // Spectators look from higher up, over the near player's head.
-    const pitch = THREE.MathUtils.degToRad((portrait ? 66 : square ? 60 : 57) + (spectating ? 9 : 0));
-    const target = new THREE.Vector3(0, 0, portrait ? 1.3 : 0.55);
-    const dir = new THREE.Vector3(0, Math.sin(pitch), Math.cos(pitch));
-    // [point, minNdcY, maxNdcY, maxAbsNdcX]
-    const pts: [THREE.Vector3, number, number, number][] = [];
-    for (const p of tableEdgePoints(16)) {
-      if (p.z > 2.5) continue; // the near rim may hide behind the hand
-      pts.push([p, -1, 0.8, portrait ? 0.99 : 0.96]);
-    }
-    for (let s = 1; s < this.n; s++) {
-      const head = avatarPosition(s, this.n).setY(4.3);
-      const side = Math.abs(head.x) > 3;
-      // Side opponents may be cut a little on narrow screens; the far one may reach the top edge.
-      pts.push([head, -1, side ? 0.8 : 0.93, portrait && side ? 1.4 : 0.97]);
-    }
-    if (spectating) pts.push([new THREE.Vector3(0, 0, TABLE_EXTENT), -0.7, 1, 1]);
-    else pts.push([new THREE.Vector3(0, 0, 2.3), portrait ? -0.36 : -0.42, 1, 1]);
-    const cam = new THREE.PerspectiveCamera(fov, aspect, 0.1, 400);
-    const fits = (dist: number) => {
-      cam.position.copy(target).addScaledVector(dir, dist);
-      cam.lookAt(target);
-      cam.updateMatrixWorld(true);
-      for (const [p, minY, maxY, maxX] of pts) {
-        tmpV2.copy(p).project(cam);
-        if (tmpV2.z > 1 || tmpV2.y < minY || tmpV2.y > maxY || Math.abs(tmpV2.x) > maxX) return false;
-      }
-      return true;
-    };
-    let lo = 4;
-    let hi = 90;
-    for (let i = 0; i < 32; i++) {
-      const mid = (lo + hi) / 2;
-      if (fits(mid)) hi = mid;
-      else lo = mid;
-    }
-    this.camPos.copy(target).addScaledVector(dir, hi);
-    this.camTarget.copy(target);
-    this.camFov = fov;
+    const heads: Ball[] = [];
+    for (let v = spectating ? 0 : 1; v < this.n; v++) heads.push(headBall(v, this.n));
+    const view = fitSeatView({
+      width: W,
+      height: H,
+      cards: CARD_AREA,
+      heads,
+      edge: tableEdgePoints(24).filter((p) => p.z < 0.25 * TABLE_EXTENT),
+      hud: this.stage.overlay,
+      hand: spectating ? null : this.handRect(),
+      // Spectators look from higher up, over the near player's head.
+      pitch: spectating ? [56, 78, 68] : [46, 70, 60],
+      fov: portrait ? [38, 62, 50] : [28, 50, 40],
+      targetZ: [-0.4 * TABLE_EXTENT, 0.7 * TABLE_EXTENT, 0],
+    });
+    const dir = new THREE.Vector3(0, Math.sin(view.pitch), Math.cos(view.pitch));
+    this.camTarget.set(0, 0, view.targetZ);
+    this.camPos.copy(this.camTarget).addScaledVector(dir, view.distance);
+    this.camFov = view.fov;
+  }
+
+  /** Screen box of the local hand as dealt (three cards); it does not depend on the field of view. */
+  private handRect(): Rect {
+    return myHandRect(3, { width: this.stage.width, height: this.stage.height, fov: this.camFov });
+  }
+
+  /** The table-card area on screen (CSS px), for name tags to keep clear of; null on the home screen. */
+  cardAreaOnScreen(): Pt2[] | null {
+    if (!this.room || this.cameraMode !== 'seat') return null;
+    return CARD_AREA.map((p) => {
+      const s = this.stage.project(tmpV2.set(p.x, p.y, p.z), tmpV2);
+      return { x: s.x, y: s.y };
+    });
+  }
+
+  /** The local hand's screen box, or null when not seated. */
+  handOnScreen(): Rect | null {
+    if (!this.room || this.mySeat === null) return null;
+    return myHandRect(Math.max(1, this.myHand.length), { width: this.stage.width, height: this.stage.height, fov: this.camFov });
   }
 
   private applyCamera(t: number) {

@@ -1,5 +1,6 @@
 import { teamOf } from '../../shared/chkobba';
 import type { RoomView } from '../../shared/protocol';
+import type { Rect } from '../game3d/viewFit';
 import { sfx } from '../sfx';
 import { copyText, h, toast } from './dom';
 
@@ -33,6 +34,11 @@ export class Hud {
   private namesB = h('div', { class: 'names' });
   private mid = h('div', { class: 'score-mid' });
   private banner = h('div', { class: 'turn-banner hidden-soft' });
+  /** Fixed place reserved for the banner, so the camera keeps the cards out of it whatever it says. */
+  private bannerSlot = h('div', { class: 'banner-slot' }, this.banner);
+  private top: HTMLElement;
+  private bottom: HTMLElement;
+  private seated = false;
   private codeChip = h('button', { class: 'chip code-chip', title: 'Copy invite link' });
   private chatBtn: HTMLButtonElement;
   private chatCount = h('span', { class: 'counter-dot hidden' }, '0');
@@ -107,7 +113,26 @@ export class Hud {
       ),
       h('div', { class: 'dock' }, this.micBtn, this.voiceBtn),
     );
-    this.el = h('div', { class: 'hud' }, top, this.banner, bottom, this.spectatorBar);
+    this.top = top;
+    this.bottom = bottom;
+    this.el = h('div', { class: 'hud' }, top, this.bannerSlot, bottom, this.spectatorBar);
+  }
+
+  /** Screen boxes the HUD covers, which the 3D view keeps the table cards and faces out of. */
+  overlayRects(): Rect[] {
+    const els = [
+      ...this.top.querySelectorAll<HTMLElement>('.hud-left, .hud-right'),
+      ...this.bottom.querySelectorAll<HTMLElement>('.dock'),
+      this.spectatorBar,
+      ...(this.seated ? [this.bannerSlot] : []),
+    ];
+    const out: Rect[] = [];
+    for (const el of els) {
+      const r = el.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) continue;
+      out.push({ left: r.left, top: r.top, right: r.right, bottom: r.bottom });
+    }
+    return out;
   }
 
   private bannerText = '';
@@ -139,6 +164,7 @@ export class Hud {
     this.voiceBtn.title = joined ? 'Voice chat (connected)' : 'Join voice chat';
     this.voiceBtn.classList.toggle('teal', !joined);
     this.micBtn.classList.toggle('hidden', !joined);
+    this.el.classList.toggle('voice-on', joined);
     this.micBtn.classList.toggle('mic-on', joined && !muted);
     this.micBtn.classList.toggle('mic-off', joined && muted);
     this.micBtn.textContent = !hasMic ? '🚫' : muted ? '🔇' : '🎙️';
@@ -151,6 +177,7 @@ export class Hud {
     const g = room.game;
     const n = room.seats.length;
     const my = room.you.seat;
+    this.seated = my !== null;
     const myTeam = my === null ? 0 : teamOf(my);
     const scores = g?.scores ?? [0, 0];
     const label = (t: number) => (n === 2 ? (t === my ? 'You' : (room.seats[t]?.name ?? '—')) : teamNames(room, t));
@@ -178,7 +205,7 @@ export class Hud {
     let mine = false;
     if (room.phase === 'playing' && g) {
       const p = room.seats[g.turn];
-      const narrow = window.innerWidth < 720;
+      const narrow = window.innerWidth < 720 || window.innerHeight < 500;
       if (g.turn === my) {
         mine = true;
         text = narrow ? 'Your turn!' : opts.myTurnReady ? 'Your turn — pick a card!' : 'Your turn…';
