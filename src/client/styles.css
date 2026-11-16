@@ -1506,6 +1506,21 @@ select {
   white-space: nowrap;
 }
 
+/* The crew: real friends, shown with their own pictures. */
+.cafe-chars.crew {
+  grid-template-columns: repeat(5, 1fr);
+}
+
+.cafe-char img.photo {
+  width: 84%;
+  max-width: 54px;
+  margin: 3px 0 2px;
+  border-radius: 50%;
+  border: 2px solid var(--ink);
+  object-fit: cover;
+  background: #fffaf0;
+}
+
 .cafe-colors {
   display: flex;
   flex-wrap: wrap;
@@ -1548,6 +1563,12 @@ select {
   height: 118%;
   margin-top: 12%;
   object-fit: cover;
+}
+
+.avatar-dot.portrait.photo img {
+  width: 100%;
+  height: 100%;
+  margin-top: 0;
 }
 
 /* voice */

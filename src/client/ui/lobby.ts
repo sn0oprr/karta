@@ -7,6 +7,7 @@ import {
   type RoomView,
   TARGET_SCORES,
   TURN_TIMERS,
+  isCrew,
 } from '../../shared/protocol';
 import { sfx } from '../sfx';
 import { copyText, h, initials, toast } from './dom';
@@ -46,7 +47,8 @@ export function avatarDot(p: PlayerInfo | null, size = 34, portrait: string | nu
   return h(
     'span',
     {
-      class: `avatar-dot ${portrait ? 'portrait' : ''}`,
+      // (The crew's portraits are pictures, already framed on the face.)
+      class: `avatar-dot ${portrait ? 'portrait' : ''} ${portrait && isCrew(p?.character) ? 'photo' : ''}`,
       style: { background: p ? (AVATAR_COLORS[p.color] ?? '#ccc') : 'transparent', width: `${size}px`, height: `${size}px` },
     },
     portrait ? h('img', { src: portrait, alt: '' }) : p ? (p.bot ? '🤖' : initials(p.name)) : '',

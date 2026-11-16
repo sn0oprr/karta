@@ -14,7 +14,7 @@ import { PortraitStudio } from './game3d/portrait';
 import { Stage } from './game3d/stage';
 import { Table } from './game3d/table';
 import { animator } from './game3d/tween';
-import { profile, saveProfile } from './identity';
+import { profile, saveProfile, withDefaultName } from './identity';
 import { Net } from './net';
 import { sfx } from './sfx';
 import { CafePicker } from './ui/cafe';
@@ -94,7 +94,7 @@ class App {
     });
     this.studio.sound = (drink) => drinkAudio.play(drink);
     this.cafe = new CafePicker(this.studio, (patch) => {
-      saveProfile(patch);
+      saveProfile(withDefaultName(patch));
       this.net.updateProfile();
       this.cafe.render();
       this.hud.setDrink(drinkInfo(profile.drink).icon);

@@ -7,9 +7,9 @@
 - **Spectators.** Anyone can watch with the link (`?watch=1`), or by joining a full table. Spectators can rotate the view and take over a bot's seat or an away player's seat.
 - **Voice chat.** Peer-to-peer WebRTC voice for players and spectators, with mute, deafen, per-person volume, push-to-talk (hold **V**), and avatar mouths that move when people talk.
 - **Bots** in three levels (easy, normal, hard) to fill empty seats. A bot also plays for anyone who drops out, until they reconnect.
-- **Your café persona.** Pick who you are at the table: eight characters (El Hajj in his red chechia, the bald café boss in shades, a grandma in her polka-dot headscarf, a curly-haired student…), a skin tone and a shirt colour. Then order: an express, a tea with pine nuts, a Coke, or a chicha that stands beside your chair. Tap your drink on the table (or press **D**) to take a sip or a puff, with real drinking sounds; everyone at the table sees and hears it, and bots sip theirs now and then.
+- **Your café persona.** Pick who you are at the table: eight regulars (El Hajj in his red chechia, the bald café boss in shades, a grandma in her polka-dot headscarf, a curly-haired student…) with a skin tone and a shirt colour, or one of **the crew**, nine friends drawn after their own avatars: Rafaa, NiNi Nina, Tha3loub, ta7foun, Sn0opr, Bou3ish, 7saan, habboub and Gratos, each with their own hair, beard, glasses and clothes at the table and their picture in the menus. Picking one of the crew also gives you their name, unless you typed your own; bots stick to the regulars. Then order: an express, a tea with pine nuts, a Coke, or a chicha that stands beside your chair. Tap your drink on the table (or press **D**) to take a sip or a puff, with real drinking sounds; everyone at the table sees and hears it, and bots sip theirs now and then.
 - **Quality of life:** an optional turn timer, reconnecting to your seat after a refresh, text chat, quick Tunisian reactions ("Ya3tik sa77a!", "Mabrouk!"), a rules screen, and procedural sound effects (darbuka on a chkobba!).
-- **All art is drawn in code.** Card faces (figures wearing a chechia, a golden 7♦), the terrace, the avatars and the drinks need no external assets. Sound effects are synthesized too, except the four drinking recordings in `src/client/assets/sounds/` (each holds several sips; the game finds them by loudness and plays one per tap).
+- **All art is drawn in code.** Card faces (figures wearing a chechia, a golden 7♦), the terrace, the avatars (the crew's included) and the drinks need no external assets. The exceptions are the crew's portraits in `src/client/assets/crew/` (cropped from their avatars, for the menus) and the four drinking recordings in `src/client/assets/sounds/` (each holds several sips; the game finds them by loudness and plays one per tap). Sound effects are synthesized.
 
 ## Chkobba rules implemented
 
@@ -32,7 +32,7 @@ npm install
 npm run dev          # game server on :3000 + Vite on :5173 (proxied)
 ```
 
-Open http://localhost:5173, create a table, and open the invite link in another browser (or a private window) to play against yourself. You can also add bots.
+Open http://localhost:5173, create a table, and open the invite link in another browser (or a private window) to play against yourself. You can also add bots. Dev-only sheets: `/card-preview.html` (card art) and `/avatar-preview.html` (every crew member's portrait beside their 3D figure).
 
 ```bash
 npm test             # rules engine, bots, and a multiplayer server suite over real sockets
@@ -72,8 +72,9 @@ Voice audio flows directly between browsers (a mesh, up to 12 people per table).
 src/shared/   rules engine (chkobba.ts), deck (cards.ts), bots (bot.ts), socket protocol (protocol.ts)
 src/server/   Express + Socket.IO: rooms, seats, spectators, game flow, timers, bots, voice signaling
 src/client/
-  game3d/     Three.js scene: terrace, table, card meshes and art, avatars and characters, drinks and smoke,
-              animation system, board controller, portrait renderer for the café menu
+  game3d/     Three.js scene: terrace, table, card meshes and art, avatars and characters (the crew's beards,
+              hair, glasses and outfits in features.ts and outfits.ts), drinks and smoke, animation system,
+              board controller, portrait renderer for the café menu
   ui/         DOM overlay: home, lobby, café menu, HUD, name tags, results, chat, reactions, voice panel
   voice.ts    WebRTC mesh voice chat
   sfx.ts      WebAudio procedural sound effects (drinkAudio.ts plays the drinking recordings)

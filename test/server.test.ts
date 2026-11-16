@@ -9,6 +9,7 @@ import {
   type ServerToClient,
   type Welcome,
   isCharacter,
+  isCrew,
   isDrink,
   isSkin,
 } from '../src/shared/protocol';
@@ -347,6 +348,11 @@ describe('server', () => {
     b.socket.emit('profile', { name: 'Omar', character: 'dragon', skin: 99, drink: 'whisky', color: -3 } as never);
     await a.waitFor(() => a.room!.version > version, 4000, 'profile broadcast');
     expect(a.room!.seats[1]).toMatchObject({ character: 'nejma', skin: 4, drink: 'coke' });
+    // One of the crew, with their name.
+    version = a.room!.version;
+    b.socket.emit('profile', { name: 'Gratos', color: 1, character: 'gratos', skin: 4, drink: 'coke' });
+    await a.waitFor(() => a.room!.version > version, 4000, 'crew look');
+    expect(a.room!.seats[1]).toMatchObject({ name: 'Gratos', character: 'gratos' });
 
     // A sip reaches everyone else, not the sipper; a second sip right away is dropped.
     a.socket.emit('sip');
@@ -379,6 +385,7 @@ describe('server', () => {
       expect(await host.call('addBot', { seat: 1 })).toEqual({ ok: true });
       const bot = await host.waitFor(() => host.room!.seats[1], 4000, 'bot seated');
       expect(isCharacter(bot.character) && isSkin(bot.skin) && isDrink(bot.drink)).toBe(true);
+      expect(isCrew(bot.character)).toBe(false);
       await host.waitFor(() => host.sips.includes(bot.id), 4000, 'bot sip');
     } finally {
       Object.assign(SIP_TIMING, saved);

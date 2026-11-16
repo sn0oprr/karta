@@ -1,13 +1,17 @@
 /**
- * Cartoon players: round heads, rosy cheeks, and eight café characters to choose from
- * (an old man in a red chechia, the café boss, a grandma in her headscarf…).
+ * Cartoon players: round heads, rosy cheeks, and the café characters to choose from: eight
+ * regulars (an old man in a red chechia, the café boss, a grandma in her headscarf…) and the
+ * crew, real friends drawn after their portraits (their own hair, beards, glasses and clothes).
  */
 import * as THREE from 'three';
 import { type CharacterId, SKIN_TONES } from '../../shared/protocol';
+import { type Beard, type Crop, type Curly, type GlassesKind, beard, cropHair, curlyHair, glasses, grin, hashSeed, shades, sleepyLid } from './features';
 import { addOutline, toon } from './materials';
+import { type Outfit, TORSO, addWatch, dress, torsoScale } from './outfits';
 import { animator, ease } from './tween';
 
-type HairStyle = 'chechia' | 'quiff' | 'bald' | 'cap' | 'bun' | 'scarf' | 'curls' | 'long';
+type HairStyle = 'chechia' | 'quiff' | 'bald' | 'cap' | 'bun' | 'scarf' | 'curls' | 'long' | 'crop' | 'curly';
+type MustacheShape = 'droopy' | 'handlebar' | 'full' | 'bushy' | 'thin';
 
 interface Look {
   hair: string;
@@ -15,9 +19,9 @@ interface Look {
   /** Brow thickness (1 = normal). */
   browSize: number;
   style: HairStyle;
-  mustache: null | { color: string; shape: 'droopy' | 'handlebar' };
+  mustache: null | { color: string; shape: MustacheShape };
   stubble: boolean;
-  glasses: null | 'round' | 'big' | 'shades';
+  glasses: null | 'round' | 'big' | 'shades' | GlassesKind;
   shadesOnHead: boolean;
   earrings: null | 'gold' | 'hoop' | 'stud';
   flower: boolean;
@@ -28,6 +32,28 @@ interface Look {
   accent: string;
   /** Torso width (1 = normal). */
   build: number;
+  // The crew's extras:
+  /** Their own skin colour (the skin tone picker does not apply). */
+  skin?: string;
+  beard?: Beard;
+  /** Hairline and volume for the 'crop' style. */
+  crop?: Crop;
+  /** Curls for the 'curly' style. */
+  curly?: Curly;
+  /** Frame colour and lens tint of 'rect', 'wayfarer' and 'wire' glasses. */
+  frame?: string;
+  tint?: string;
+  /** Heavy, half-closed eyelids. */
+  sleepy?: boolean;
+  /** An open smile with teeth. */
+  grin?: boolean;
+  /** Head, ear and nose sizes (1 = normal). */
+  head?: number;
+  ears?: number;
+  nose?: number;
+  /** Their own clothes (the shirt colour picker does not apply). */
+  outfit?: Outfit;
+  watch?: 'gold' | 'smart';
 }
 
 const BASE: Look = {
@@ -119,6 +145,156 @@ export const LOOKS: Record<CharacterId, Look> = {
     lips: '#e0245e',
     build: 0.93,
   },
+
+  // ── The crew ──
+  rafaa: {
+    ...BASE,
+    skin: '#f2ae78',
+    hair: '#3a2e2f',
+    brow: '#2a2022',
+    browSize: 1.3,
+    style: 'crop',
+    crop: { front: 0.68, volume: 0.06 },
+    beard: { color: '#3a2c28', style: 'full' },
+    mustache: { color: '#3a2c28', shape: 'full' },
+    glasses: 'wayfarer',
+    frame: '#17161d',
+    build: 1.08,
+    outfit: { kind: 'puffer', color: '#2b3150', inner: '#1d1b22' },
+  },
+  nini: {
+    ...BASE,
+    skin: '#f2ae78',
+    hair: '#5a3a26',
+    brow: '#3a2416',
+    browSize: 1.35,
+    style: 'bald',
+    mustache: { color: '#6a4026', shape: 'bushy' },
+    glasses: 'rect',
+    frame: '#1d1b24',
+    tint: '#8a5a32',
+    head: 1.06,
+    ears: 1.25,
+    nose: 1.3,
+    build: 1.06,
+    outfit: { kind: 'sweater', color: '#2a2731', neck: 'turtle' },
+  },
+  tha3loub: {
+    ...BASE,
+    skin: '#f2ae78',
+    hair: '#352a2c',
+    brow: '#241b1c',
+    browSize: 1.45,
+    style: 'crop',
+    crop: { front: 0.64, volume: 0.16, wave: 0.55 },
+    beard: { color: '#2e2426', style: 'full', size: 1.35 },
+    mustache: { color: '#2e2426', shape: 'full' },
+    sleepy: true,
+    nose: 1.15,
+    build: 1.1,
+    watch: 'gold',
+    outfit: { kind: 'sweater', color: '#2b2730', neck: 'crew' },
+  },
+  ta7foun: {
+    ...BASE,
+    skin: '#f2ae78',
+    hair: '#3b2a24',
+    brow: '#2e201b',
+    browSize: 1.25,
+    style: 'curly',
+    curly: { size: 0.15, lift: 0.06, front: 0.72 },
+    beard: { color: '#3b2a24', style: 'short' },
+    mustache: { color: '#3b2a24', shape: 'full' },
+    grin: true,
+    glasses: 'rect',
+    frame: '#1b1a20',
+    nose: 1.15,
+    outfit: { kind: 'hoodie', color: '#a6a3aa', inner: '#f5f2ee' },
+  },
+  sn0opr: {
+    ...BASE,
+    skin: '#f2ae78',
+    hair: '#2a1f20',
+    brow: '#2a1f20',
+    browSize: 1.4,
+    style: 'curly',
+    curly: { size: 0.19, lift: 0.2, front: 0.62 },
+    beard: { color: '#2a1f20', style: 'full', size: 1.25 },
+    mustache: { color: '#2a1f20', shape: 'full' },
+    build: 1.06,
+    outfit: { kind: 'polo', color: '#f6f3ee', band: '#2f8a74', strap: '#26242c' },
+  },
+  bou3ish: {
+    ...BASE,
+    skin: '#f0aa72',
+    hair: '#33292b',
+    brow: '#251d1f',
+    browSize: 1.2,
+    style: 'crop',
+    crop: { front: 0.66, volume: 0.1, wave: 1 },
+    beard: { color: '#33282a', style: 'short' },
+    mustache: { color: '#33282a', shape: 'thin' },
+    grin: true,
+    build: 1.22,
+    outfit: { kind: 'bare' },
+  },
+  '7saan': {
+    ...BASE,
+    skin: '#f2ae78',
+    hair: '#3a2b27',
+    brow: '#3a2b27',
+    browSize: 1.3,
+    style: 'curly',
+    curly: { size: 0.27, lift: 0.32, front: 0.6 },
+    mustache: { color: '#5a3825', shape: 'bushy' },
+    glasses: 'rect',
+    frame: '#1b1a24',
+    nose: 1.2,
+    head: 1.04,
+    build: 1.1,
+    outfit: { kind: 'tee', color: '#1fd3a2' },
+  },
+  habboub: {
+    ...BASE,
+    skin: '#efb48c',
+    hair: '#271c1a',
+    brow: '#271c1a',
+    browSize: 1.1,
+    style: 'curly',
+    curly: { size: 0.25, lift: 0.55, front: 0.62 },
+    beard: { color: '#3a2620', style: 'goatee' },
+    mustache: { color: '#3a2620', shape: 'thin' },
+    glasses: 'wire',
+    frame: '#4a4750',
+    tint: '#d9a6c8',
+    build: 0.95,
+    watch: 'smart',
+    outfit: { kind: 'sweater', color: '#ad8a70', neck: 'crew' },
+  },
+  gratos: {
+    ...BASE,
+    skin: '#d49a6e',
+    hair: '#1f1b22',
+    brow: '#1f1b22',
+    browSize: 1.3,
+    style: 'curly',
+    curly: { size: 0.14, lift: 0.05, front: 0.64 },
+    beard: { color: '#231d20', style: 'full', size: 1.05 },
+    mustache: { color: '#231d20', shape: 'full' },
+    glasses: 'wayfarer',
+    frame: '#141318',
+    build: 1.08,
+    outfit: { kind: 'vest', color: '#d22237', stripes: ['#f7c51a', '#d4152d'], sleeves: '#24212a' },
+  },
+};
+
+/** Mustache halves (capsules, tilted down or curled up) and the middle piece, in face space. */
+const MUSTACHES: Record<MustacheShape, { r: number; len: number; x: number; y: number; z: number; tilt: number; mid: number; midY: number }> = {
+  droopy: { r: 0.12, len: 0.36, x: 0.22, y: -0.27, z: -0.12, tilt: -0.45, mid: 0.13, midY: -0.22 },
+  handlebar: { r: 0.1, len: 0.4, x: 0.25, y: -0.24, z: -0.12, tilt: 0.28, mid: 0.13, midY: -0.22 },
+  full: { r: 0.12, len: 0.4, x: 0.24, y: -0.29, z: -0.13, tilt: -0.55, mid: 0.14, midY: -0.23 },
+  bushy: { r: 0.15, len: 0.36, x: 0.25, y: -0.27, z: -0.14, tilt: -0.38, mid: 0.17, midY: -0.22 },
+  thin: { r: 0.042, len: 0.3, x: 0.17, y: -0.265, z: -0.125, tilt: -0.25, mid: 0.05, midY: -0.235 },
 };
 
 const OUT = 0.035;
@@ -214,12 +390,14 @@ export class Avatar {
   private body: THREE.Group;
   private head: THREE.Group;
   private mouth: THREE.Mesh;
-  private smile: THREE.Mesh;
+  /** The closed smile (or the crew's open grin), hidden while talking. */
+  private smile: THREE.Object3D;
   private eyes: THREE.Group[] = [];
   private cheeks: THREE.Mesh[] = [];
   private armL: THREE.Group;
   private armR: THREE.Group;
-  private shirtMat: THREE.MeshToonMaterial;
+  /** The shirt, recoloured by setColor (null when the character wears their own clothes). */
+  private shirtMat: THREE.MeshToonMaterial | null;
   private skinMats: THREE.MeshToonMaterial[] = [];
   private allMats: THREE.Material[] = [];
   /** The avatar's own meshes (not the cards it may be holding). */
@@ -241,7 +419,7 @@ export class Avatar {
   constructor(style: AvatarStyle) {
     this.character = style.character;
     const L = LOOKS[style.character] ?? LOOKS.wled;
-    const skin = SKIN_TONES[style.skin] ?? SKIN_TONES[0];
+    const skin = L.skin ?? SKIN_TONES[style.skin] ?? SKIN_TONES[0];
     const skinMat = () => {
       const m = toon(skin);
       this.skinMats.push(m);
@@ -253,19 +431,24 @@ export class Avatar {
       if (outline > 0) addOutline(m, outline);
       return m;
     };
-    this.shirtMat = toon(style.color);
+    const outfit = L.outfit ? dress(L.outfit, skin) : null;
+    this.shirtMat = outfit ? null : toon(style.color);
+    const shirt = (outfit?.torso ?? this.shirtMat)!;
+    const sleeves = (outfit?.sleeves ?? this.shirtMat)!;
 
     if (style.chair !== false) this.root.add(buildChair());
 
     // Body.
     this.body = new THREE.Group();
-    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(1.05, 1.5, 8, 20), this.shirtMat);
-    torso.position.y = -0.55;
-    torso.scale.set(1.08 * L.build, 1, 0.82 * (0.85 + 0.15 * L.build));
+    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(TORSO.r, TORSO.h, 8, 20), shirt);
+    torso.position.y = TORSO.y;
+    torso.scale.copy(torsoScale(L.build));
     torso.castShadow = true;
     addOutline(torso, OUT);
     this.body.add(torso);
-    if (L.necklace) {
+    if (outfit) {
+      // Their own collar comes with the outfit (below).
+    } else if (L.necklace) {
       const necklace = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.045, 8, 28), toon(GOLD));
       necklace.rotation.x = Math.PI / 2 - 0.25;
       necklace.position.set(0, 0.86, -0.1);
@@ -286,15 +469,17 @@ export class Avatar {
 
     // Arms reaching forward to hold the cards.
     const hands: THREE.Mesh[] = [];
+    const uppers: THREE.Mesh[] = [];
     const makeArm = (side: number) => {
       const arm = new THREE.Group();
       arm.position.set(side * 1.08 * L.build, 0.55, -0.1);
-      const upper = new THREE.Mesh(new THREE.CapsuleGeometry(0.3, 1.2, 6, 12), this.shirtMat);
+      const upper = new THREE.Mesh(new THREE.CapsuleGeometry(0.3, 1.2, 6, 12), sleeves);
       upper.position.set(0, -0.2, -0.6);
       upper.rotation.x = Math.PI / 2.6;
       upper.castShadow = true;
       addOutline(upper, 0.03);
       arm.add(upper);
+      uppers.push(upper);
       const hand = skinSphere(0.33, 14, 0.03);
       hand.position.set(-side * 0.25, -0.55, -1.35);
       arm.add(hand);
@@ -305,6 +490,8 @@ export class Avatar {
     this.armL = makeArm(-1);
     this.armR = makeArm(1);
     this.leftHand = hands[0]!;
+    outfit?.finish({ body: this.body, arms: uppers, build: L.build, skin: skinMat });
+    if (L.watch) addWatch(uppers[0]!, L.watch);
 
     this.handAnchor.position.set(0, 0.25, -1.75);
     this.body.add(this.handAnchor);
@@ -312,13 +499,15 @@ export class Avatar {
     // Head.
     this.head = new THREE.Group();
     this.head.position.y = 2.25;
+    this.head.scale.setScalar(L.head ?? 1);
     const skull = skinSphere(1.18, 32, OUT);
     skull.scale.set(1, 0.96, 0.96);
     this.head.add(skull);
+    const earSize = L.ears ?? 1;
     for (const s of [-1, 1]) {
       const ear = skinSphere(0.26, 12, 0.025);
       ear.position.set(s * 1.13, -0.05, 0.05);
-      ear.scale.set(0.6, 1, 0.9);
+      ear.scale.set(0.6 * earSize, earSize, 0.9 * earSize);
       this.head.add(ear);
     }
 
@@ -352,6 +541,11 @@ export class Avatar {
           eye.add(lash);
         }
       }
+      if (L.sleepy) {
+        const lidMat = skinMat();
+        lidMat.side = THREE.DoubleSide;
+        eye.add(sleepyLid(lidMat, s));
+      }
       face.add(eye);
       this.eyes.push(eye);
       const brow = new THREE.Mesh(new THREE.CapsuleGeometry(0.05 * L.browSize, 0.22 * Math.sqrt(L.browSize), 4, 8), basic(L.brow));
@@ -369,13 +563,17 @@ export class Avatar {
     }
     // Nose.
     const nose = skinSphere(0.17, 12, 0.02);
-    nose.position.set(0, -0.08, -0.2);
-    nose.scale.set(1, 0.9, 1.1);
+    const noseSize = L.nose ?? 1;
+    nose.position.set(0, -0.08, -0.2 - (noseSize - 1) * 0.05);
+    nose.scale.set(noseSize, 0.9 * noseSize, 1.1 * noseSize);
     face.add(nose);
-    // Mouth: a smile arc when quiet, an open mouth when talking (or blowing smoke).
-    this.smile = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.045, 6, 16, Math.PI), basic(L.lips));
-    this.smile.rotation.z = Math.PI;
-    this.smile.position.set(0, -0.36, -0.02);
+    // Mouth: a smile arc (or a toothy grin) when quiet, an open mouth when talking (or blowing smoke).
+    if (L.grin) this.smile = grin();
+    else {
+      this.smile = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.045, 6, 16, Math.PI), basic(L.lips));
+      this.smile.rotation.z = Math.PI;
+      this.smile.position.set(0, -0.36, -0.02);
+    }
     face.add(this.smile);
     this.mouth = new THREE.Mesh(new THREE.SphereGeometry(0.2, 14, 10), basic('#5a1f1f'));
     this.mouth.position.set(0, -0.45, 0.02);
@@ -392,7 +590,9 @@ export class Avatar {
       stubble.scale.set(1, 0.96, 0.96);
       this.head.add(stubble);
     }
-    if (L.mustache) this.addMustache(face, L.mustache.color, L.mustache.shape);
+    if (L.beard) this.head.add(beard(L.beard));
+    // (A mustache that joins a beard is shaded like it.)
+    if (L.mustache) this.addMustache(face, L.mustache.color, L.mustache.shape, !!L.beard);
     if (L.glasses === 'round' || L.glasses === 'big') {
       const big = L.glasses === 'big';
       const gMat = basic(big ? '#7a2e1f' : '#1d1b2e');
@@ -406,9 +606,15 @@ export class Avatar {
       bridge.position.set(0, 0.2, -0.24);
       face.add(bridge);
     } else if (L.glasses === 'shades') {
-      const shades = this.shades();
-      shades.position.set(0, 0.16, -0.22);
-      face.add(shades);
+      const pair = shades();
+      pair.position.set(0, 0.16, -0.22);
+      face.add(pair);
+    } else if (L.glasses) {
+      const pair = glasses(L.glasses, L.frame ?? '#1d1b2e', L.tint);
+      pair.position.set(0, 0.15, -0.3);
+      face.add(pair);
+      // Nobody sees the eyes behind dark shades (and the pupils would poke through the lenses).
+      if (L.glasses === 'wayfarer') for (const e of this.eyes) e.visible = false;
     }
 
     this.addHair(L);
@@ -426,46 +632,25 @@ export class Avatar {
     this.blinkAt = performance.now() + 1500 + Math.random() * 3000;
   }
 
-  private addMustache(face: THREE.Group, color: string, shape: 'droopy' | 'handlebar') {
-    const mat = basic(color);
-    const handlebar = shape === 'handlebar';
+  private addMustache(face: THREE.Group, color: string, shape: MustacheShape, shaded: boolean) {
+    const mat = shaded ? toon(color) : basic(color);
+    const m = MUSTACHES[shape];
     for (const s of [-1, 1]) {
-      const half = new THREE.Mesh(new THREE.CapsuleGeometry(handlebar ? 0.1 : 0.12, handlebar ? 0.4 : 0.36, 4, 10), mat);
-      // Handlebar ends curl up, the old man's droop.
-      half.rotation.z = Math.PI / 2 + s * (handlebar ? 0.28 : -0.45);
-      half.position.set(s * (handlebar ? 0.25 : 0.22), handlebar ? -0.24 : -0.27, -0.12);
+      const half = new THREE.Mesh(new THREE.CapsuleGeometry(m.r, m.len, 4, 10), mat);
+      // Handlebar ends curl up, the others droop.
+      half.rotation.z = Math.PI / 2 + s * m.tilt;
+      half.position.set(s * m.x, m.y, m.z);
       face.add(half);
-      if (handlebar) {
+      if (shape === 'handlebar') {
         const tip = new THREE.Mesh(new THREE.SphereGeometry(0.075, 10, 8), mat);
         tip.position.set(s * 0.5, -0.1, -0.08);
         face.add(tip);
       }
     }
-    const middle = new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 8), mat);
+    const middle = new THREE.Mesh(new THREE.SphereGeometry(m.mid, 12, 8), mat);
     middle.scale.set(1.3, 0.75, 0.8);
-    middle.position.set(0, -0.22, -0.16);
+    middle.position.set(0, m.midY, -0.16);
     face.add(middle);
-  }
-
-  private shades(): THREE.Group {
-    const g = new THREE.Group();
-    const lensMat = basic('#15151f');
-    const shineMat = basic('#ffffff', { transparent: true, opacity: 0.7 });
-    for (const s of [-1, 1]) {
-      const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 0.06, 20), lensMat);
-      lens.rotation.x = Math.PI / 2;
-      lens.scale.set(1.18, 1, 0.82);
-      lens.position.set(s * 0.41, 0, 0);
-      const shine = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 6), shineMat);
-      shine.scale.set(1.6, 0.8, 0.4);
-      shine.position.set(s * 0.41 - 0.09, 0.07, -0.04);
-      g.add(lens, shine);
-    }
-    const bridge = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.3, 6), lensMat);
-    bridge.rotation.z = Math.PI / 2;
-    bridge.position.set(0, 0.06, 0);
-    g.add(bridge);
-    return g;
   }
 
   private addHair(L: Look) {
@@ -616,6 +801,12 @@ export class Avatar {
         }
         break;
       }
+      case 'crop':
+        head.add(cropHair(L.hair, L.crop ?? { front: 0.66, volume: 0.08 }, hashSeed(this.character)));
+        break;
+      case 'curly':
+        head.add(curlyHair(L.hair, L.curly ?? { size: 0.2, lift: 0.1, front: 0.62 }, hashSeed(this.character)));
+        break;
       case 'long': {
         const hair = sphere(1.24, L.hair, 28, OUT);
         hair.scale.set(1.03, 0.74, 1.03);
@@ -643,10 +834,10 @@ export class Avatar {
       }
     }
     if (L.shadesOnHead) {
-      const shades = this.shades();
-      shades.position.set(0, 1.14, -0.98);
-      shades.rotation.x = 0.85;
-      head.add(shades);
+      const pair = shades();
+      pair.position.set(0, 1.14, -0.98);
+      pair.rotation.x = 0.85;
+      head.add(pair);
     }
     if (L.flower) {
       // Jasmine behind the ear.
@@ -684,7 +875,7 @@ export class Avatar {
   }
 
   setColor(color: string) {
-    this.shirtMat.color.set(color);
+    this.shirtMat?.color.set(color);
   }
 
   /** Mouth opening driven by voice level (0..1). */

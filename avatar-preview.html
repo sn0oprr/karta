@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Karta avatar preview</title>
+    <style>
+      :root {
+        --bg: #f6e7cf;
+        --ink: #1d1b2e;
+        --muted: #6b6478;
+        --view: 150px;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 20px;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: 'Fredoka', system-ui, sans-serif;
+      }
+      h1 {
+        font-family: 'Lilita One', 'Fredoka', system-ui, sans-serif;
+        font-weight: 400;
+        margin: 0 0 4px;
+        font-size: 26px;
+      }
+      p {
+        margin: 0 0 16px;
+        color: var(--muted);
+      }
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+      .who {
+        width: 80px;
+        font-weight: 600;
+      }
+      .row img,
+      .row canvas {
+        width: var(--view);
+        height: var(--view);
+        border-radius: 16px;
+        border: 3px solid var(--ink);
+        background: radial-gradient(circle at 50% 35%, #fffaf0 0%, #ffe3b8 70%, #ffd29a 100%);
+      }
+      .row img {
+        border-radius: 50%;
+        object-fit: cover;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Karta — café characters</h1>
+    <p>Portrait, then the 3D look-alike from the front, the side, and from across the table. Add <code>?all=1</code> for the regulars.</p>
+    <div id="app"></div>
+    <script type="module" src="/src/client/dev/avatarPreview.ts"></script>
+  </body>
+</html>

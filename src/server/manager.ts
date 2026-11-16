@@ -1,13 +1,13 @@
 import { createHash, getRandomValues } from 'node:crypto';
 import {
   AVATAR_COLORS,
-  CHARACTERS,
   type CharacterId,
   DEFAULT_SETTINGS,
   DRINKS,
   type DrinkId,
   type HandshakeAuth,
   NAME_MAX,
+  REGULARS,
   ROOM_CODE_ALPHABET,
   ROOM_CODE_LENGTH,
   type RoomSettings,
@@ -41,7 +41,7 @@ export function sanitizeName(raw: unknown): string {
   return name || 'Player';
 }
 
-/** Look for clients that do not send one (older builds): stable per player, varied across players. */
+/** Look for clients that do not send one (older builds): stable per player, varied across players, never one of the crew. */
 export function defaultLook(id: string): { character: CharacterId; skin: number; drink: DrinkId } {
   let h = 2166136261;
   for (let i = 0; i < id.length; i++) {
@@ -50,7 +50,7 @@ export function defaultLook(id: string): { character: CharacterId; skin: number;
   }
   h >>>= 0;
   return {
-    character: CHARACTERS[h % CHARACTERS.length]!.id,
+    character: REGULARS[h % REGULARS.length]!.id,
     skin: (h >>> 8) % SKIN_TONES.length,
     drink: DRINKS[(h >>> 16) % DRINKS.length]!.id,
   };

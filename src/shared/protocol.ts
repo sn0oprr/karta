@@ -39,8 +39,8 @@ export const AVATAR_COLORS = [
   '#fb8500', // orange
 ] as const;
 
-/** Who you are at the café table. */
-export const CHARACTERS = [
+/** Who you are at the café table: one of the regulars… */
+export const REGULARS = [
   { id: 'hajj', name: 'El Hajj', hint: 'Old man in a red chechia' },
   { id: 'wled', name: 'Wled 7ouma', hint: 'Guy from the neighbourhood' },
   { id: 'patron', name: 'El Patron', hint: 'The café boss' },
@@ -50,7 +50,26 @@ export const CHARACTERS = [
   { id: 'taleba', name: 'Taleba', hint: 'Curly-haired student' },
   { id: 'nejma', name: 'Nejma', hint: 'The star of the café' },
 ] as const;
+
+/**
+ * …or one of the crew: real friends, drawn after their own portraits (shown in the café menu).
+ * Picking one also gives you its name, unless you typed your own. Bots never play them.
+ */
+export const CREW = [
+  { id: 'rafaa', name: 'Rafaa', hint: 'Shades and a puffer jacket' },
+  { id: 'nini', name: 'NiNi Nina', hint: 'Turtleneck and tinted glasses' },
+  { id: 'tha3loub', name: 'Tha3loub', hint: 'Sleepy eyes and a big beard' },
+  { id: 'ta7foun', name: 'ta7foun', hint: 'Big grin and a grey hoodie' },
+  { id: 'sn0opr', name: 'Sn0opr', hint: 'Polo shirt and a crossbody bag' },
+  { id: 'bou3ish', name: 'Bou3ish', hint: 'No shirt, big smile' },
+  { id: '7saan', name: '7saan', hint: 'Curls, glasses and a big moustache' },
+  { id: 'habboub', name: 'habboub', hint: 'Curls and round glasses' },
+  { id: 'gratos', name: 'Gratos', hint: 'Shades and the red-and-yellow jersey' },
+] as const;
+
+export const CHARACTERS = [...REGULARS, ...CREW] as const;
 export type CharacterId = (typeof CHARACTERS)[number]['id'];
+export type CrewId = (typeof CREW)[number]['id'];
 
 export const SKIN_TONES = ['#f6c9a0', '#e8b088', '#d39a6a', '#b97a4f', '#8d5a3a'] as const;
 
@@ -65,6 +84,10 @@ export type DrinkId = (typeof DRINKS)[number]['id'];
 
 export function isCharacter(v: unknown): v is CharacterId {
   return CHARACTERS.some((c) => c.id === v);
+}
+
+export function isCrew(v: unknown): v is CrewId {
+  return CREW.some((c) => c.id === v);
 }
 
 export function isDrink(v: unknown): v is DrinkId {

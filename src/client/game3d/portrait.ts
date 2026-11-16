@@ -3,7 +3,8 @@
  * preview of "you" (your character, skin, shirt and order) that sips when you tap it.
  */
 import * as THREE from 'three';
-import { AVATAR_COLORS, type CharacterId, type DrinkId } from '../../shared/protocol';
+import { AVATAR_COLORS, type CharacterId, type DrinkId, isCrew } from '../../shared/protocol';
+import { CREW_PORTRAITS } from '../crewPortraits';
 import { Avatar } from './avatar';
 import { DrinkProp, avatarDrinker, performSip } from './drinks';
 import { FLOOR_Y } from './environment';
@@ -102,8 +103,9 @@ export class PortraitStudio {
     return this.copy.toDataURL('image/png');
   }
 
-  /** Head-and-shoulders portrait of a character. */
+  /** Head-and-shoulders portrait of a character (the crew have their own pictures). */
   characterURL(character: CharacterId, skin: number, color: number): string | null {
+    if (isCrew(character)) return CREW_PORTRAITS[character];
     const key = `c|${character}|${skin}|${color}`;
     const hit = this.urls.get(key);
     if (hit) return hit;

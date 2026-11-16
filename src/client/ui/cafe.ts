@@ -1,10 +1,13 @@
 import {
   AVATAR_COLORS,
   CHARACTERS,
+  CREW,
   type CharacterId,
   DRINKS,
   type DrinkId,
+  REGULARS,
   SKIN_TONES,
+  isCrew,
 } from '../../shared/protocol';
 import type { PortraitStudio } from '../game3d/portrait';
 import { profile } from '../identity';
@@ -19,16 +22,19 @@ export interface Look {
 }
 
 /**
- * "Your café order": pick who you are at the table (character, skin tone, shirt) and what you
- * drink. A live preview shows you, and sips when tapped. Lives in the lobby, or in a pop-up
- * panel during the game.
+ * "Your café order": pick who you are at the table (one of the regulars with a skin tone and a
+ * shirt, or one of the crew as they are) and what you drink. A live preview shows you, and sips
+ * when tapped. Lives in the lobby, or in a pop-up panel during the game.
  */
 export class CafePicker {
   readonly el: HTMLElement;
   private preview: HTMLElement;
   private drinksEl = h('div', { class: 'cafe-drinks' });
   private charsEl = h('div', { class: 'cafe-chars' });
+  private crewEl = h('div', { class: 'cafe-chars crew' });
+  private skinLabel = h('span', { class: 'label' }, 'Skin');
   private skinsEl = h('div', { class: 'swatches mini' });
+  private colorLabel = h('span', { class: 'label' }, 'Shirt');
   private colorsEl = h('div', { class: 'swatches mini' });
   private nameEl = h('div', { class: 'cafe-who' });
 
@@ -60,7 +66,9 @@ export class CafePicker {
       ),
       h('div', { class: 'label' }, 'Who are you today?'),
       this.charsEl,
-      h('div', { class: 'cafe-colors' }, h('span', { class: 'label' }, 'Skin'), this.skinsEl, h('span', { class: 'label' }, 'Shirt'), this.colorsEl),
+      h('div', { class: 'label' }, 'The crew'),
+      this.crewEl,
+      h('div', { class: 'cafe-colors' }, this.skinLabel, this.skinsEl, this.colorLabel, this.colorsEl),
       h('div', { class: 'muted cafe-tip' }, 'Tap your drink on the table', h('span', { class: 'kbd-only' }, ' (or press D)'), ' to take a sip!'),
     );
   }
@@ -96,22 +104,28 @@ export class CafePicker {
       }),
     );
 
-    this.charsEl.replaceChildren(
-      ...CHARACTERS.map((c) => {
-        const img = this.studio.characterURL(c.id, me.skin, me.color);
-        return h(
-          'button',
-          {
-            class: `cafe-char ${c.id === me.character ? 'on' : ''}`,
-            title: c.hint,
-            'aria-pressed': c.id === me.character ? 'true' : 'false',
-            onclick: () => c.id !== me.character && this.pick({ character: c.id }),
-          },
-          img ? h('img', { src: img, alt: '' }) : h('span', { class: 'emoji' }, c.name[0]),
-          h('span', null, c.name),
-        );
-      }),
-    );
+    const tile = (c: (typeof CHARACTERS)[number]) => {
+      const img = this.studio.characterURL(c.id, me.skin, me.color);
+      return h(
+        'button',
+        {
+          class: `cafe-char ${c.id === me.character ? 'on' : ''}`,
+          title: c.hint,
+          'aria-pressed': c.id === me.character ? 'true' : 'false',
+          onclick: () => c.id !== me.character && this.pick({ character: c.id }),
+        },
+        img ? h('img', { src: img, alt: '', class: isCrew(c.id) ? 'photo' : '' }) : h('span', { class: 'emoji' }, c.name[0]),
+        h('span', null, c.name),
+      );
+    };
+    this.charsEl.replaceChildren(...REGULARS.map(tile));
+    this.crewEl.replaceChildren(...CREW.map(tile));
+
+    // The crew come with their own face and clothes: only their colour (badge, chat) is up to you.
+    const own = isCrew(me.character);
+    this.skinLabel.classList.toggle('hidden', own);
+    this.skinsEl.classList.toggle('hidden', own);
+    this.colorLabel.textContent = own ? 'Colour' : 'Shirt';
 
     this.skinsEl.replaceChildren(
       ...SKIN_TONES.map((tone, i) =>
@@ -129,8 +143,8 @@ export class CafePicker {
         h('button', {
           class: `swatch ${me.color === i ? 'on' : ''}`,
           style: { background: c },
-          title: 'Shirt colour',
-          'aria-label': `Shirt colour ${i + 1}`,
+          title: own ? 'Your colour' : 'Shirt colour',
+          'aria-label': `${own ? 'Colour' : 'Shirt colour'} ${i + 1}`,
           onclick: () => me.color !== i && this.pick({ color: i }),
         }),
       ),
