@@ -420,10 +420,9 @@ export class Environment {
     cliff.position.y = FLOOR_Y - 13;
     this.group.add(cliff);
 
-    // Kilim rug under the table.
-    const rug = new THREE.Mesh(new THREE.PlaneGeometry(15, 15), new THREE.MeshLambertMaterial({ map: kilimTexture() }));
+    // Kilim rug under the table, square with it and wide enough for the chairs.
+    const rug = new THREE.Mesh(new THREE.PlaneGeometry(17.5, 17.5), new THREE.MeshLambertMaterial({ map: kilimTexture() }));
     rug.rotation.x = -Math.PI / 2;
-    rug.rotation.z = Math.PI / 4;
     rug.position.y = FLOOR_Y + 0.02;
     rug.receiveShadow = true;
     this.group.add(rug);
