@@ -131,7 +131,10 @@ export class SeatTags {
         tag.el.style.display = 'none';
         continue;
       }
-      const before = `${tag.el.style.display}|${tag.nameEl.textContent}|${tag.icons.textContent}`;
+      // Anything that changes the label's size has it measured again.
+      const sizeKey = () =>
+        `${tag.el.style.display}|${tag.nameEl.textContent}|${tag.icons.textContent}|${tag.thinking.classList.contains('hidden')}`;
+      const before = sizeKey();
       tag.el.style.display = '';
       tag.nameEl.textContent = p.name;
       tag.dot.style.background = AVATAR_COLORS[p.color] ?? '#ccc';
@@ -149,7 +152,7 @@ export class SeatTags {
       const isTurn = !!g && room.phase === 'playing' && g.turn === s;
       tag.el.classList.toggle('turn', isTurn);
       tag.thinking.classList.toggle('hidden', !(isTurn && (p.bot || p.autopilot)));
-      if (before !== `${tag.el.style.display}|${tag.nameEl.textContent}|${tag.icons.textContent}`) tag.spot.dirty = true;
+      if (before !== sizeKey()) tag.spot.dirty = true;
     }
   }
 
@@ -324,6 +327,23 @@ export class SeatTags {
       const tag = this.tags[s]!;
       const head = heads.get(s)!;
       tag.el.style.visibility = '';
+
+      // Turn timer (first: showing or hiding it changes the label's width).
+      const g = room.game;
+      const timed = !!g && !!g.turnDeadline && g.turn === s && room.phase === 'playing';
+      if (timed !== (tag.timer.style.display !== 'none')) {
+        tag.timer.style.display = timed ? '' : 'none';
+        tag.spot.dirty = true;
+      }
+      if (timed) {
+        const total = room.settings.turnSeconds * 1000;
+        const left = g.turnDeadline! + this.clockOffset - Date.now();
+        const frac = Math.max(0, Math.min(1, left / total));
+        const len = 2 * Math.PI * 9;
+        tag.timerCircle.setAttribute('stroke-dashoffset', String(len * (1 - frac)));
+        tag.timerCircle.setAttribute('stroke', frac < 0.25 ? '#d7263d' : '#2f7fd6');
+      }
+
       this.measure(tag.el, tag.spot, remeasure);
       const box = this.place(tag.el, tag.spot, this.aroundHead(head, tag.spot.w, tag.spot.h), avoid, dt);
       avoid.labels.push(box);
@@ -331,18 +351,6 @@ export class SeatTags {
       const p = room.seats[s];
       const level = p ? (this.levels.get(p.id) ?? 0) : 0;
       tag.el.classList.toggle('speaking', level > 0.08);
-
-      // Turn timer.
-      const g = room.game;
-      if (g && g.turnDeadline && g.turn === s && room.phase === 'playing') {
-        const total = room.settings.turnSeconds * 1000;
-        const left = g.turnDeadline + this.clockOffset - Date.now();
-        const frac = Math.max(0, Math.min(1, left / total));
-        tag.timer.style.display = '';
-        const len = 2 * Math.PI * 9;
-        tag.timerCircle.setAttribute('stroke-dashoffset', String(len * (1 - frac)));
-        tag.timerCircle.setAttribute('stroke', frac < 0.25 ? '#d7263d' : '#2f7fd6');
-      } else tag.timer.style.display = 'none';
     }
 
     // The local player's own speech bubble.

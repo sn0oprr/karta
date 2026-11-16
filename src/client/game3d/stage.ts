@@ -17,6 +17,11 @@ export class Stage {
   private overlaySource: (() => Rect[]) | null = null;
   private overlayCheckedAt = 0;
   private resizeTimer: ReturnType<typeof setTimeout> | null = null;
+  /** When the pending resize callbacks were first scheduled (they run at least this often while resizing). */
+  private resizePendingSince = 0;
+  /** The size the resize callbacks last saw. */
+  private notifiedW = 0;
+  private notifiedH = 0;
   private last = performance.now();
   private running = false;
   private shakeAmount = 0;
@@ -68,19 +73,53 @@ export class Stage {
     this.scene.add(fill);
 
     // Mobile toolbars and rotations resize the visual viewport, sometimes in several steps.
-    const later = () => this.scheduleResize();
-    window.addEventListener('resize', later);
-    window.addEventListener('orientationchange', later);
-    window.visualViewport?.addEventListener('resize', later);
+    const changed = () => this.viewportChanged();
+    window.addEventListener('resize', changed);
+    // Some browsers report a rotation before the new size: look again once it has landed.
+    window.addEventListener('orientationchange', () => {
+      changed();
+      setTimeout(changed, 350);
+    });
+    window.visualViewport?.addEventListener('resize', changed);
+    this.applySize();
     this.resize();
   }
 
+  /**
+   * The drawing buffer and the camera's aspect follow the new size at once (so nothing is drawn
+   * stretched), while the costlier layout work (camera fit, hand, labels) waits for the size to
+   * settle. Events that leave the size as it was (pinch-zoom, an on-screen keyboard over the page)
+   * only re-measure the HUD.
+   */
+  private viewportChanged() {
+    if (this.applySize() || this.resizeTimer) this.scheduleResize();
+    else this.refreshOverlay();
+  }
+
+  /** Sizes the renderer and the camera to the container; true if the size changed. */
+  private applySize(): boolean {
+    const w = this.container.clientWidth || window.innerWidth;
+    const h = this.container.clientHeight || window.innerHeight;
+    if (w === this.width && h === this.height) return false;
+    this.width = w;
+    this.height = h;
+    this.renderer.setSize(w, h, false);
+    this.camera.aspect = w / h;
+    this.camera.updateProjectionMatrix();
+    return true;
+  }
+
   private scheduleResize() {
+    const now = performance.now();
     if (this.resizeTimer) clearTimeout(this.resizeTimer);
+    else this.resizePendingSince = now;
+    // Trailing debounce, but a window dragged for a while still re-lays out a few times a second.
+    const wait = now - this.resizePendingSince > 250 ? 0 : 90;
     this.resizeTimer = setTimeout(() => {
       this.resizeTimer = null;
+      this.applySize();
       this.resize();
-    }, 90);
+    }, wait);
   }
 
   onFrame(cb: FrameCallback): () => void {
@@ -125,14 +164,17 @@ export class Stage {
     return true;
   }
 
-  resize() {
-    const w = this.container.clientWidth || window.innerWidth;
-    const h = this.container.clientHeight || window.innerHeight;
-    this.width = w;
-    this.height = h;
-    this.renderer.setSize(w, h, false);
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
+  /** Re-lays out for the current size: the HUD boxes, then everyone listening to `onResize`. */
+  private resize() {
+    const w = this.width;
+    const h = this.height;
+    if (w === this.notifiedW && h === this.notifiedH) {
+      // Back to the size already laid out (e.g. a toolbar shown and hidden again).
+      this.refreshOverlay();
+      return;
+    }
+    this.notifiedW = w;
+    this.notifiedH = h;
     this.refreshOverlay(true);
     for (const cb of this.resizeCallbacks) cb(w, h);
   }
@@ -153,7 +195,8 @@ export class Stage {
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
     animator.tick(now);
-    if (now - this.overlayCheckedAt > 500) this.refreshOverlay();
+    // (Not while a resize is pending: it re-measures the HUD itself, with the size to match.)
+    if (now - this.overlayCheckedAt > 500 && !this.resizeTimer) this.refreshOverlay();
     for (const cb of this.callbacks) cb(dt, now / 1000);
     // Shake is applied only for the duration of the render so camera controllers stay unaffected.
     const shaking = this.shakeAmount > 0.002;

@@ -784,6 +784,14 @@ select {
   transform: translateY(-10px);
 }
 
+.turn-banner.banner-probe {
+  position: absolute;
+  left: 0;
+  top: 0;
+  max-width: none;
+  visibility: hidden;
+}
+
 .hud-bottom {
   position: absolute;
   bottom: calc(12px + var(--safe-bottom));
@@ -1965,6 +1973,15 @@ select {
     right: calc(12px + 2 * 42px + 2 * 8px);
   }
 
+  /* Too little room between the docks for what the banner may say: a row of its own above them. */
+  .hud.banner-row .banner-slot {
+    left: 50%;
+    right: auto;
+    width: min(var(--banner-need, 200px), calc(100% - 24px));
+    bottom: calc(20% + 42px + 8px + var(--safe-bottom));
+    transform: translateX(-50%);
+  }
+
   .turn-banner {
     font-size: 0.95rem;
   }
@@ -1978,7 +1995,16 @@ select {
     padding: 2px 8px 2px 3px;
     border-width: 2.5px;
     font-size: 0.8rem;
-    max-width: 150px;
+    max-width: 180px;
+  }
+
+  .thinking {
+    gap: 2px;
+  }
+
+  .thinking i {
+    width: 5px;
+    height: 5px;
   }
 
   .tag .mini-dot,
@@ -2134,6 +2160,17 @@ select {
     right: calc(8px + 2 * 40px + 6px + 8px);
   }
 
+  /* A squarish short window leaves no room right of the hand: centred just above the hand instead. */
+  .hud.banner-row .banner-slot {
+    left: 50%;
+    right: auto;
+    width: min(var(--banner-need, 200px), calc(100% - 16px));
+    bottom: calc(16vh + 4px + var(--safe-bottom));
+    bottom: calc(16dvh + 4px + var(--safe-bottom));
+    transform: translateX(-50%);
+    justify-content: center;
+  }
+
   .turn-banner {
     font-size: 0.85rem;
     padding: 0.3em 0.85em;
@@ -2153,7 +2190,16 @@ select {
     padding: 2px 8px 2px 3px;
     border-width: 2.5px;
     font-size: 0.78rem;
-    max-width: 150px;
+    max-width: 180px;
+  }
+
+  .thinking {
+    gap: 2px;
+  }
+
+  .thinking i {
+    width: 5px;
+    height: 5px;
   }
 
   .tag .mini-dot,

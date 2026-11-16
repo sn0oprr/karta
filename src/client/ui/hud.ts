@@ -26,6 +26,9 @@ export function teamNames(room: RoomView, team: number): string {
 }
 
 /** In-game heads-up display: scoreboard, turn banner, buttons. */
+/** The stylesheet's phone layouts: a narrow screen, or a short one held sideways. */
+const COMPACT = '(max-width: 720px), (max-height: 500px) and (orientation: landscape)';
+
 export class Hud {
   readonly el: HTMLElement;
   private scoreA = h('div', { class: 'pts' }, '0');
@@ -36,6 +39,11 @@ export class Hud {
   private banner = h('div', { class: 'turn-banner hidden-soft' });
   /** Fixed place reserved for the banner, so the camera keeps the cards out of it whatever it says. */
   private bannerSlot = h('div', { class: 'banner-slot' }, this.banner);
+  /** Measures what the banner may say, to check it fits in its slot. */
+  private bannerProbe = h('div', { class: 'turn-banner banner-probe', 'aria-hidden': 'true' });
+  /** Everything the banner can say in this game, in its short (phone) wording. */
+  private bannerTexts: string[] = [];
+  private bannerFitKey = '';
   private top: HTMLElement;
   private bottom: HTMLElement;
   private seated = false;
@@ -115,7 +123,39 @@ export class Hud {
     );
     this.top = top;
     this.bottom = bottom;
-    this.el = h('div', { class: 'hud' }, top, this.bannerSlot, bottom, this.spectatorBar);
+    this.el = h('div', { class: 'hud' }, top, this.bannerSlot, bottom, this.spectatorBar, this.bannerProbe);
+    window.addEventListener('resize', () => this.fitBanner());
+    void document.fonts?.ready.then(() => {
+      this.bannerFitKey = '';
+      this.fitBanner();
+    });
+  }
+
+  /**
+   * On phones the banner sits between the docks (or right of the hand on a phone held sideways).
+   * When what it may say does not fit there (voice chat's second button, a turn timer's countdown,
+   * a long name), it gets a row of its own instead, for the whole game so the camera framing stays.
+   */
+  private fitBanner() {
+    const key = `${window.innerWidth}x${window.innerHeight}|${this.el.classList.contains('voice-on')}|${this.bannerTexts.join('|')}`;
+    if (key === this.bannerFitKey) return;
+    if (!this.bannerTexts.length) {
+      // Spectating: no banner.
+      this.bannerFitKey = key;
+      this.el.classList.remove('banner-row');
+      return;
+    }
+    let need = 0;
+    for (const t of this.bannerTexts) {
+      this.bannerProbe.textContent = t;
+      need = Math.max(need, this.bannerProbe.offsetWidth);
+    }
+    if (need === 0) return; // not on screen yet
+    this.bannerFitKey = key;
+    this.el.style.setProperty('--banner-need', `${Math.ceil(need) + 4}px`);
+    this.el.classList.remove('banner-row');
+    // (A slot squeezed to nothing measures 0 wide.)
+    this.el.classList.toggle('banner-row', this.bannerSlot.getBoundingClientRect().width < need);
   }
 
   /** Screen boxes the HUD covers, which the 3D view keeps the table cards and faces out of. */
@@ -165,6 +205,7 @@ export class Hud {
     this.voiceBtn.classList.toggle('teal', !joined);
     this.micBtn.classList.toggle('hidden', !joined);
     this.el.classList.toggle('voice-on', joined);
+    this.fitBanner();
     this.micBtn.classList.toggle('mic-on', joined && !muted);
     this.micBtn.classList.toggle('mic-off', joined && muted);
     this.micBtn.textContent = !hasMic ? '🚫' : muted ? '🔇' : '🎙️';
@@ -205,7 +246,7 @@ export class Hud {
     let mine = false;
     if (room.phase === 'playing' && g) {
       const p = room.seats[g.turn];
-      const narrow = window.innerWidth < 720 || window.innerHeight < 500;
+      const narrow = matchMedia(COMPACT).matches;
       if (g.turn === my) {
         mine = true;
         text = narrow ? 'Your turn!' : opts.myTurnReady ? 'Your turn — pick a card!' : 'Your turn…';
@@ -222,6 +263,15 @@ export class Hud {
     }
     this.deadline = mine && g?.turnDeadline ? g.turnDeadline + (Date.now() - room.serverTime) : null;
     this.tickCountdown();
+    // The short wordings above (with the longest countdown), for checking where the banner fits.
+    this.bannerTexts =
+      my === null
+        ? []
+        : [
+            `Your turn!${room.settings.turnSeconds > 0 ? `  ⏱ ${room.settings.turnSeconds}s` : ''}`,
+            ...room.seats.flatMap((p, i) => (p && i !== my ? [`${p.name}…`] : [])),
+          ];
+    this.fitBanner();
 
     // Spectator controls.
     if (my === null && room.phase !== 'lobby') {

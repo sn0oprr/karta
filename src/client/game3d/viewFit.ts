@@ -33,17 +33,6 @@ export function overlapArea(a: Rect, b: Rect): number {
   return w > 0 && h > 0 ? w * h : 0;
 }
 
-export function boundsOf(pts: Pt2[]): Rect {
-  const r = { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity };
-  for (const p of pts) {
-    r.left = Math.min(r.left, p.x);
-    r.right = Math.max(r.right, p.x);
-    r.top = Math.min(r.top, p.y);
-    r.bottom = Math.max(r.bottom, p.y);
-  }
-  return r;
-}
-
 export function polygonArea(poly: Pt2[]): number {
   let a = 0;
   for (let i = 0; i < poly.length; i++) {
@@ -174,12 +163,18 @@ const EDGE_MARGIN = 4;
 const CARD_MARGIN = 5;
 /** Part of a head's ball (from the top) that may go off screen or under the HUD. */
 const HAIR_TRIM = 0.14;
+/**
+ * Showing every head whole is worth this much of the cards' on-screen area (about 8% of their
+ * size): it wins on desktops and most phones, not on the shortest landscape screens.
+ */
+const WHOLE_HEAD_PRICE = 0.85;
 
 /**
  * Searches pitch, field of view, target and distance for the view where the card area is largest
  * on screen, subject to: the card area clear of the HUD and the hand; every head on screen and
- * clear of the HUD; the far side of the table on screen. Constraints are dropped one by one if no
- * view satisfies them all, so there is always an answer.
+ * clear of the HUD (whole, unless trimming the top of the hair buys clearly bigger cards); the far
+ * side of the table on screen. Constraints are dropped one by one if no view satisfies them all,
+ * so there is always an answer.
  */
 export function fitSeatView(input: SeatFitInput): SeatView {
   const { width: W, height: H } = input;
@@ -190,8 +185,11 @@ export function fitSeatView(input: SeatFitInput): SeatView {
   const poly: Pt2[] = input.cards.map(() => ({ x: 0, y: 0 }));
   const tmp: Pt2 = { x: 0, y: 0 };
 
-  /** relax: 0 = all constraints, 1 = heads may touch the HUD, 2 = heads may be cut, 3 = cards only. */
-  const fits = (relax: number): boolean => {
+  /**
+   * relax: 0 = all constraints, 1 = heads may touch the HUD, 2 = heads may be cut, 3 = cards only.
+   * trim: part of each head's ball (from the top: hair and hats) that may go off screen or under the HUD.
+   */
+  const fits = (relax: number, trim: number): boolean => {
     for (let i = 0; i < input.cards.length; i++) {
       const p = poly[i]!;
       if (!probe.project(input.cards[i]!, p)) return false;
@@ -209,8 +207,7 @@ export function fitSeatView(input: SeatFitInput): SeatView {
         if (tmp.x < 0 || tmp.x > W || tmp.y < 0 || tmp.y > H) return false;
         continue;
       }
-      // The top of the ball is hair and hats: it may be trimmed, the face below may not.
-      box.top += (box.bottom - box.top) * HAIR_TRIM;
+      box.top += (box.bottom - box.top) * trim;
       if (box.left < EDGE_MARGIN || box.right > W - EDGE_MARGIN || box.top < EDGE_MARGIN || box.bottom > H - EDGE_MARGIN) return false;
       if (relax < 1) for (const k of headBlockers) if (overlapArea(box, k) > 0) return false;
     }
@@ -228,20 +225,20 @@ export function fitSeatView(input: SeatFitInput): SeatView {
   const FAR = 160;
 
   /** Closest feasible distance for one pitch/fov/target, and the card area's size there. */
-  const evaluate = (pitchDeg: number, fov: number, tz: number, relax: number) => {
+  const evaluate = (pitchDeg: number, fov: number, tz: number, relax: number, trim: number) => {
     const pitch = pitchDeg * rad;
     probe.set(pitch, fov, tz, FAR);
-    if (!fits(relax)) return null;
+    if (!fits(relax, trim)) return null;
     let lo = 2;
     let hi = FAR;
     for (let i = 0; i < 20 && hi - lo > 0.02; i++) {
       const mid = (lo + hi) / 2;
       probe.set(pitch, fov, tz, mid);
-      if (fits(relax)) hi = mid;
+      if (fits(relax, trim)) hi = mid;
       else lo = mid;
     }
     probe.set(pitch, fov, tz, hi);
-    fits(relax);
+    fits(relax, trim);
     // Prefer the sweet spots a little: a near top-down view or a fisheye look would win on area alone.
     const dp = (pitchDeg - pPref) / 25;
     const df = (fov - fPref) / 25;
@@ -253,11 +250,13 @@ export function fitSeatView(input: SeatFitInput): SeatView {
 
   const steps = (a: number, b: number, n: number) => Array.from({ length: n }, (_, i) => a + ((b - a) * i) / Math.max(1, n - 1));
 
-  for (let relax = 0; relax <= 3; relax++) {
-    let best: ReturnType<typeof evaluate> = null;
+  type Found = NonNullable<ReturnType<typeof evaluate>>;
+  /** The best view under one set of constraints, or null if none satisfies them. */
+  const search = (relax: number, trim: number): Found | null => {
+    let best: Found | null = null;
     const consider = (p: number, f: number, z: number) => {
       if (p < pMin || p > pMax || f < fMin || f > fMax || z < zMin || z > zMax) return;
-      const r = evaluate(p, f, z, relax);
+      const r = evaluate(p, f, z, relax, trim);
       if (r && (!best || r.score > best.score)) best = r;
     };
     // Coarse grid, then a finer one around the best.
@@ -265,20 +264,38 @@ export function fitSeatView(input: SeatFitInput): SeatView {
     const fs = steps(fMin, fMax, 4);
     const zs = steps(zMin, zMax, 7);
     for (const p of ps) for (const f of fs) for (const z of zs) consider(p, f, z);
-    if (!best) continue;
+    if (!best) return null;
     const dP = (pMax - pMin) / 10;
     const dF = (fMax - fMin) / 6;
     const dZ = (zMax - zMin) / 12;
     for (let pass = 0; pass < 2; pass++) {
-      const b: NonNullable<ReturnType<typeof evaluate>> = best;
+      const b: Found = best;
       const k = pass === 0 ? 1 : 0.5;
       const bp = b.pitch / rad;
       for (const p of [bp - dP * k, bp, bp + dP * k])
         for (const f of [b.fov - dF * k, b.fov, b.fov + dF * k])
           for (const z of [b.targetZ - dZ * k, b.targetZ, b.targetZ + dZ * k]) consider(p, f, z);
     }
-    const r: NonNullable<ReturnType<typeof evaluate>> = best;
-    return { pitch: r.pitch, fov: r.fov, targetZ: r.targetZ, distance: r.distance, area: r.area, relaxed: relax };
+    return best;
+  };
+  const result = (r: Found, relaxed: number): SeatView => ({
+    pitch: r.pitch,
+    fov: r.fov,
+    targetZ: r.targetZ,
+    distance: r.distance,
+    area: r.area,
+    relaxed,
+  });
+
+  // Whole heads, unless trimming the top of the hair (or a hat) buys clearly bigger cards.
+  const trimmed = search(0, HAIR_TRIM);
+  if (trimmed) {
+    const whole = search(0, 0);
+    return result(whole && whole.area >= trimmed.area * WHOLE_HEAD_PRICE ? whole : trimmed, 0);
+  }
+  for (let relax = 1; relax <= 3; relax++) {
+    const r = search(relax, HAIR_TRIM);
+    if (r) return result(r, relax);
   }
   // Nothing fits at all (a tiny window): a plain overview.
   return { pitch: pPref * rad, fov: fPref, targetZ: zPref, distance: 30, area: 0, relaxed: 4 };

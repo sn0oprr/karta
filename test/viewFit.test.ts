@@ -108,6 +108,22 @@ describe('seat camera fit', () => {
     expect(view.area).toBeGreaterThan(15000);
   });
 
+  it('shows the far head whole on a desktop, where that costs the cards little', () => {
+    const W = 1440;
+    const H = 860;
+    const hud = [
+      { left: 10, top: 10, right: 420, bottom: 68 },
+      { left: W - 190, top: 10, right: W - 10, bottom: 50 },
+      { left: 12, top: H - 60, right: 172, bottom: H - 12 },
+      { left: W - 60, top: H - 60, right: W - 12, bottom: H - 12 },
+      { left: 485, top: H * 0.71 - 44, right: 955, bottom: H * 0.71 },
+    ];
+    const inp = input(W, H, hud, { left: 490, top: 670, right: 950, bottom: H });
+    expectFramed(inp);
+    const { headRect } = camera(inp);
+    for (const b of inp.heads) expect(headRect(b).top).toBeGreaterThanOrEqual(0);
+  });
+
   it('still answers when nothing can fit', () => {
     const view = fitSeatView(input(120, 90, [{ left: 0, top: 0, right: 120, bottom: 80 }], { left: 0, top: 40, right: 120, bottom: 90 }));
     expect(view.relaxed).toBeGreaterThan(0);

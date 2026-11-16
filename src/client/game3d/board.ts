@@ -1243,6 +1243,10 @@ export class Board {
     cam.fov = this.camFrom.fov + (this.camFov - this.camFrom.fov) * k;
     cam.updateProjectionMatrix();
     cam.lookAt(tmpV);
+    // The hand is laid out for the field of view being blended to: scale it to the current one so
+    // it keeps its size on screen meanwhile (cards near the camera's axis scale with tan(fov / 2)).
+    const s = Math.tan(THREE.MathUtils.degToRad(cam.fov / 2)) / Math.tan(THREE.MathUtils.degToRad(this.camFov / 2));
+    this.handGroup.scale.set(s, s, 1);
   }
 
   // ═══════════════════════════════ frame ═══════════════════════════════

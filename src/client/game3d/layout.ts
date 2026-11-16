@@ -115,7 +115,8 @@ export function myHandTransform(
   const portrait = aspect < 1;
   // Short landscape (a phone on its side): taller cards sunk lower, so their corners (rank and
   // suit) read clearly while the table keeps most of the little height there is.
-  const short = !portrait && view.height < 500;
+  // (Same test as the stylesheet's `(max-height: 500px) and (orientation: landscape)`.)
+  const short = view.width > view.height && view.height <= 500;
   const cardScreenH = portrait ? 0.19 : short ? 0.28 : 0.25;
   /** Part of each card above the screen's bottom edge. */
   const shown = short ? 0.52 : 0.9;
