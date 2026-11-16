@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { type Ball, type Pt3, type Rect, type SeatFitInput, fitSeatView, overlapArea, polygonRectOverlap } from '../src/client/game3d/viewFit';
+import { TABLE_EXTENT, tableEdgePoints } from '../src/client/game3d/table';
 
-// A 2v2 table as the board describes it: card area, opponents' heads, the far half of a round table.
+// A 2v2 table as the board describes it: card area, opponents' heads, the far part of the square table.
 const CARDS: Pt3[] = [
   { x: -4.85, y: 0, z: -3.92 },
   { x: 4.85, y: 0, z: -3.92 },
@@ -11,10 +12,7 @@ const CARDS: Pt3[] = [
 ];
 const head = (x: number, z: number): Ball => ({ center: { x, y: 2.46, z }, radius: 1.21 });
 const HEADS = [head(7.09, 0), head(0, -7.09), head(-7.09, 0)];
-const EDGE: Pt3[] = Array.from({ length: 24 }, (_, i) => {
-  const a = (i / 24) * Math.PI * 2;
-  return { x: Math.cos(a) * 4.95, y: 0, z: Math.sin(a) * 4.95 };
-}).filter((p) => p.z < 1.24);
+const EDGE: Pt3[] = tableEdgePoints(24).filter((p) => p.z < 0.25 * TABLE_EXTENT);
 
 function input(width: number, height: number, hud: Rect[], hand: Rect | null): SeatFitInput {
   const portrait = width / height < 0.8;
@@ -28,7 +26,7 @@ function input(width: number, height: number, hud: Rect[], hand: Rect | null): S
     hand,
     pitch: [46, 70, 60],
     fov: portrait ? [38, 62, 50] : [28, 50, 40],
-    targetZ: [-2, 3.5, 0],
+    targetZ: [-0.4 * TABLE_EXTENT, 0.7 * TABLE_EXTENT, 0],
   };
 }
 
@@ -59,6 +57,13 @@ function expectFramed(inp: SeatFitInput) {
   for (const p of poly) {
     expect(p.x).toBeGreaterThanOrEqual(0);
     expect(p.x).toBeLessThanOrEqual(inp.width);
+  }
+  // The far side of the table, corners included, on screen.
+  for (const e of inp.edge) {
+    const p = px(e);
+    expect(p.x).toBeGreaterThanOrEqual(0);
+    expect(p.x).toBeLessThanOrEqual(inp.width);
+    expect(p.y).toBeGreaterThanOrEqual(0);
   }
   // Table cards clear of the HUD and the hand.
   for (const r of [...inp.hud, ...(inp.hand ? [inp.hand] : [])]) expect(polygonRectOverlap(poly, r)).toBe(0);
