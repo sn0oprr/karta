@@ -175,6 +175,8 @@ class App {
       { cafe: this.cafe.el, portrait: (p) => this.studio.characterURL(p.character, p.skin, p.color) },
     );
     this.tags = new SeatTags(this.stage, this.board);
+    // The camera frames the table around the HUD.
+    this.stage.setOverlaySource(() => this.hud.overlayRects());
     this.chat = new ChatPanel((text) => this.net.socket.emit('chat', { text }));
     this.chat.onUnread = (n) => this.hud.setUnread(n);
     this.emotes = new EmotePicker((id) => this.net.socket.emit('emote', { id }));
