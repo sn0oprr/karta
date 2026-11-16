@@ -129,6 +129,9 @@ export interface VoiceMember {
   muted: boolean;
 }
 
+/** Most people in one table's voice chat (a full mesh: everyone connects to everyone). */
+export const VOICE_MAX = 12;
+
 export interface GameView {
   round: number;
   dealer: number;

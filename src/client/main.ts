@@ -128,9 +128,13 @@ class App {
     });
 
     this.voice = new VoiceChat(this.net);
+    let audioBlocked = false;
     this.voice.onChange(() => {
       const v = this.voice.state;
       this.hud.setVoice(v.joined, v.muted, v.hasMic);
+      // iPhones only start someone's audio from a tap when the mic is off; any tap fixes it.
+      if (v.audioBlocked && !audioBlocked) toast('🔊 Tap the screen to hear voice chat', 'info', 5000);
+      audioBlocked = v.audioBlocked;
     });
 
     this.hud = new Hud({
@@ -200,7 +204,10 @@ class App {
     };
     document.addEventListener('visibilitychange', syncSpeed);
     syncSpeed();
-    window.addEventListener('pointerdown', () => sfx.unlock(), { capture: true });
+    // Touch pointerdown is not a user gesture for audio on iPhones; pointerup and touchend are.
+    for (const type of ['pointerdown', 'pointerup', 'touchend', 'keydown']) {
+      window.addEventListener(type, () => sfx.unlock(), { capture: true, passive: true });
+    }
     window.addEventListener('popstate', () => this.route());
     this.stage.start();
     this.route();

@@ -52,6 +52,11 @@ deploy key, ssh alias `github-karta`), `~/bin/deploy-karta.sh` fast-forwards it 
 container (compose project `karta`) on `127.0.0.1:3510`, and the host Caddy proxies `karta.gamez.tn` to it.
 Every push to `main` (except docs-only changes) runs that script through `.github/workflows/deploy.yml`.
 
+Voice chat's TURN relay is coturn on the same server, in `/opt/coturn` (a copy of [`docs/coturn/`](docs/coturn/),
+with the address and the secret filled in), on host networking: ufw opens `3478` udp+tcp and `50000:51999/udp`.
+`/opt/games/karta/.env` sets `TURN_URLS` (`karta.gamez.tn:3478`, UDP and TCP) and `TURN_SECRET`, the same value as
+`static-auth-secret` in `/opt/coturn/turnserver.conf`.
+
 ## Deploying
 
 Karta needs a long-running Node process with WebSockets. Render, Fly.io, Railway, a VPS or any container host works. Serverless platforms (for example Vercel functions) do not, because they can't keep the Socket.IO connections open.
@@ -60,11 +65,13 @@ Karta needs a long-running Node process with WebSockets. Render, Fly.io, Railway
 | --- | --- |
 | `PORT` | HTTP port (default `3000`) |
 | `STUN_URLS` | Comma-separated STUN URLs (default: Google's public STUN) |
-| `TURN_URLS`, `TURN_USERNAME`, `TURN_CREDENTIAL` | A TURN server for voice chat behind strict NATs or firewalls (recommended in production) |
+| `TURN_URLS` | Comma-separated TURN URLs for voice chat behind strict NATs or firewalls (recommended in production), e.g. `turn:turn.example.com:3478?transport=udp,turn:turn.example.com:3478?transport=tcp` |
+| `TURN_SECRET` | coturn's `static-auth-secret` (`use-auth-secret` mode): each player gets their own TURN credentials, valid for a day |
+| `TURN_USERNAME`, `TURN_CREDENTIAL` | Fixed TURN credentials instead, handed to every player as they are |
 | `ICE_SERVERS_JSON` | Full `RTCIceServer[]` JSON. Overrides the STUN and TURN variables above |
 | `CORS_ORIGIN` | Only if the client is served from a different origin |
 
-Voice audio flows directly between browsers (a mesh, up to 12 people per table). Without TURN, players behind symmetric NATs (some mobile networks and corporate Wi-Fi) may not hear each other. A TURN server such as coturn or a hosted TURN service fixes that. Browsers only allow microphone access on `https://` or `localhost`.
+Voice audio flows directly between browsers (a mesh, up to 12 people per table). Without TURN, players behind symmetric NATs may not hear each other: that includes most phones on mobile data (carrier-grade NAT) and some corporate Wi-Fi. A TURN server such as coturn or a hosted TURN service fixes that; the browser console logs how each voice link connected (`host`/`srflx` is direct, `relay` went through TURN). Browsers only allow microphone access on `https://` or `localhost`.
 
 ## How it's built
 

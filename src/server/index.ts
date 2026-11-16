@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
 import path from 'node:path';
@@ -7,28 +8,41 @@ import { Server } from 'socket.io';
 import type { ClientToServer, IceServerConfig, ServerToClient } from '../shared/protocol';
 import { RoomManager } from './manager';
 
-function iceServersFromEnv(): IceServerConfig[] {
-  if (process.env.ICE_SERVERS_JSON) {
+/** How long TURN credentials handed to a client stay valid. Each (re)connection gets fresh ones. */
+const TURN_TTL_SECONDS = 24 * 3600;
+
+/**
+ * Time-limited TURN credentials for coturn's `use-auth-secret` mode (the "TURN REST API"): the
+ * username is the expiry time, the password an HMAC of it, so nothing permanent reaches browsers.
+ */
+export function turnCredentials(secret: string, user: string, ttlSeconds = TURN_TTL_SECONDS, now = Date.now()) {
+  const username = `${Math.floor(now / 1000) + ttlSeconds}:${user}`;
+  return { username, credential: createHmac('sha1', secret).update(username).digest('base64') };
+}
+
+/** The ICE servers (STUN, TURN) to give one player, from the environment. */
+export function iceServersFromEnv(env: NodeJS.ProcessEnv = process.env): (userId: string) => IceServerConfig[] {
+  if (env.ICE_SERVERS_JSON) {
     try {
-      const parsed = JSON.parse(process.env.ICE_SERVERS_JSON) as IceServerConfig[];
-      if (Array.isArray(parsed)) return parsed;
+      const parsed = JSON.parse(env.ICE_SERVERS_JSON) as IceServerConfig[];
+      if (Array.isArray(parsed)) return () => parsed;
     } catch {
       console.warn('[karta] ICE_SERVERS_JSON is not valid JSON, ignoring it');
     }
   }
-  const stun = (process.env.STUN_URLS ?? 'stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const servers: IceServerConfig[] = stun.length ? [{ urls: stun }] : [];
-  if (process.env.TURN_URLS) {
-    servers.push({
-      urls: process.env.TURN_URLS.split(',').map((s) => s.trim()),
-      username: process.env.TURN_USERNAME,
-      credential: process.env.TURN_CREDENTIAL,
-    });
-  }
-  return servers;
+  const list = (v: string | undefined) =>
+    (v ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+  const stun = list(env.STUN_URLS ?? 'stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302');
+  const base: IceServerConfig[] = stun.length ? [{ urls: stun }] : [];
+  const turn = list(env.TURN_URLS);
+  if (!turn.length) return () => base;
+  const secret = env.TURN_SECRET;
+  if (secret) return (userId) => [...base, { urls: turn, ...turnCredentials(secret, userId) }];
+  const fixed = [...base, { urls: turn, username: env.TURN_USERNAME, credential: env.TURN_CREDENTIAL }];
+  return () => fixed;
 }
 
 export interface KartaServer {

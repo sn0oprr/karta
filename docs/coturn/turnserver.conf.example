@@ -1,0 +1,56 @@
+# coturn settings, used by compose.yaml. Copy to turnserver.conf, fill in the address, and append the secret:
+#   printf 'static-auth-secret=%s\n' "$(openssl rand -hex 32)" >> turnserver.conf
+#   sudo chgrp 65534 turnserver.conf && chmod 640 turnserver.conf   # the image runs as nobody:nogroup
+# The game server hands each player TURN credentials that expire after a day, signed with that secret:
+# set the same value as TURN_SECRET, and TURN_URLS=turn:<host>:3478?transport=udp,turn:<host>:3478?transport=tcp.
+
+# The server's public IPv4 (on radyou.tn it sits directly on the network interface). Behind 1:1 NAT
+# (AWS and the like), listen and relay on the private address and add external-ip=<public>/<private>.
+listening-ip=<SERVER_PUBLIC_IPV4>
+relay-ip=<SERVER_PUBLIC_IPV4>
+listening-port=3478
+min-port=50000
+max-port=51999
+
+realm=gamez.tn
+server-name=karta.gamez.tn
+use-auth-secret
+fingerprint
+stale-nonce=600
+
+# Voice only: plain TURN over UDP and TCP, UDP relays (the admin CLI and DTLS are off by default).
+no-tls
+no-tcp-relay
+no-software-attribute
+no-multicast-peers
+
+# Limits: 40 relays per player (a 12-person table over UDP and TCP needs 22), 2000 in all,
+# and about 320 kbit/s per relay (voice uses about 50).
+user-quota=40
+total-quota=2000
+max-bps=40000
+
+# Never relay to private, loopback or reserved addresses (Docker networks, local services).
+denied-peer-ip=0.0.0.0-0.255.255.255
+denied-peer-ip=10.0.0.0-10.255.255.255
+denied-peer-ip=100.64.0.0-100.127.255.255
+denied-peer-ip=127.0.0.0-127.255.255.255
+denied-peer-ip=169.254.0.0-169.254.255.255
+denied-peer-ip=172.16.0.0-172.31.255.255
+denied-peer-ip=192.0.0.0-192.0.0.255
+denied-peer-ip=192.0.2.0-192.0.2.255
+denied-peer-ip=192.88.99.0-192.88.99.255
+denied-peer-ip=192.168.0.0-192.168.255.255
+denied-peer-ip=198.18.0.0-198.19.255.255
+denied-peer-ip=198.51.100.0-198.51.100.255
+denied-peer-ip=203.0.113.0-203.0.113.255
+denied-peer-ip=224.0.0.0-255.255.255.255
+denied-peer-ip=::1
+denied-peer-ip=::ffff:0.0.0.0-::ffff:255.255.255.255
+denied-peer-ip=64:ff9b::-64:ff9b::ffff:ffff
+denied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+
+log-file=stdout
+simple-log
+pidfile=/tmp/turnserver.pid

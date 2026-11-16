@@ -45,7 +45,9 @@ class Sfx {
       const d = this.noise.getChannelData(0);
       for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
     }
-    if (this.ctx.state === 'suspended') void this.ctx.resume();
+    // Safari also has 'interrupted' (a call, Siri, another app's audio), which needs the same resume.
+    const state = this.ctx.state as string;
+    if (state === 'suspended' || state === 'interrupted') void this.ctx.resume().catch(() => {});
   }
 
   get context(): AudioContext | null {

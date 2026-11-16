@@ -77,7 +77,8 @@ interface SocketData {
 }
 
 export interface ManagerOptions {
-  iceServers: Welcome['iceServers'];
+  /** ICE servers for voice chat, or a function giving each player theirs (per-user TURN credentials). */
+  iceServers: Welcome['iceServers'] | ((userId: string) => Welcome['iceServers']);
   /** How long a room with nobody connected survives (ms). */
   emptyRoomTtl?: number;
   rand?: () => number;
@@ -156,7 +157,8 @@ export class RoomManager {
 
   private onConnection(socket: Sock) {
     const data = socket.data as SocketData;
-    socket.emit('welcome', { id: data.id, iceServers: this.opts.iceServers });
+    const ice = this.opts.iceServers;
+    socket.emit('welcome', { id: data.id, iceServers: typeof ice === 'function' ? ice(data.id) : ice });
 
     const currentRoom = (): Room | null => (data.room ? (this.rooms.get(data.room) ?? null) : null);
     const leaveCurrent = () => {

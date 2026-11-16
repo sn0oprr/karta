@@ -16,8 +16,11 @@ services:
       - "${KARTA_BIND:-3000}:3000"
     environment:
       # Voice chat (WebRTC). The server defaults to Google's public STUN; add a TURN server for players behind
-      # strict NATs, or pass the full RTCIceServer[] list in ICE_SERVERS_JSON.
+      # strict NATs (most phones on mobile data), or pass the full RTCIceServer[] list in ICE_SERVERS_JSON.
+      # With TURN_SECRET (coturn's static-auth-secret), each player gets credentials that expire after a day;
+      # otherwise TURN_USERNAME / TURN_CREDENTIAL are handed out as they are.
       TURN_URLS: "${TURN_URLS:-}"
+      TURN_SECRET: "${TURN_SECRET:-}"
       TURN_USERNAME: "${TURN_USERNAME:-}"
       TURN_CREDENTIAL: "${TURN_CREDENTIAL:-}"
       ICE_SERVERS_JSON: "${ICE_SERVERS_JSON:-}"

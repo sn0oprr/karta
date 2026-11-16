@@ -278,6 +278,30 @@ describe('server', () => {
     await a.waitFor(() => a.room!.voice.length === 1, 4000, 'voice leave');
   });
 
+  it('drops a member from voice when they come back on a new connection, so the others start fresh', async () => {
+    const a = client('rami-secret', 'Rami');
+    const code = (await a.call<{ ok: boolean; code: string }>('create', {})).code;
+    const b = client('sara-secret', 'Sara');
+    await b.call('join', { code });
+    await a.waitFor(() => a.room?.seats[1]);
+    expect(await a.call('voice:join', { muted: false })).toEqual({ ok: true });
+    expect(await b.call('voice:join', { muted: false })).toEqual({ ok: true });
+    await a.waitFor(() => a.room!.voice.length === 2, 4000, 'voice list');
+
+    // Sara's phone switches networks: a new connection re-attaches before the old one is known to be dead.
+    const b2 = client('sara-secret', 'Sara');
+    expect(await b2.call('join', { code })).toMatchObject({ ok: true });
+    await a.waitFor(() => a.room!.voice.length === 1, 4000, 'stale voice entry dropped');
+    expect(b2.room!.voice.map((v) => v.id)).toEqual([a.room!.you.id]);
+
+    expect(await b2.call('voice:join', { muted: false })).toEqual({ ok: true });
+    await a.waitFor(() => a.room!.voice.length === 2, 4000, 'voice rejoined');
+    // Joining the same table again on the same connection keeps the voice session.
+    expect(await b2.call('join', { code })).toMatchObject({ ok: true });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(a.room!.voice).toHaveLength(2);
+  });
+
   it('lets the host fill seats with bots, and bots play a 2v2 game', async () => {
     const host = client('hana-secret', 'Hana');
     const code = (await host.call<{ ok: boolean; code: string }>('create', { settings: { mode: '2v2', targetScore: 11 } })).code;

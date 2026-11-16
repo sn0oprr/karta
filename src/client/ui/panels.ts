@@ -198,19 +198,22 @@ export class VoicePanel {
     }
     const rows: HTMLElement[] = [];
     const me = room?.you.id;
+    if (v.audioBlocked) {
+      rows.push(h('button', { class: 'btn teal', onclick: () => this.voice.resumeAudio() }, '🔊 Tap to hear everyone'));
+    }
     for (const m of room?.voice ?? []) {
       const level = h('i', { style: { height: '0%' } });
       this.levelEls.set(m.id, level);
       const isMe = m.id === me;
       const info = isMe ? null : this.voice.peerInfo(m.id);
-      const state = info?.state;
+      const status = !info || info.state === 'connected' ? null : info.attempts >= 2 ? 'trouble connecting' : 'connecting…';
       rows.push(
         h(
           'div',
           { class: 'voice-row' },
           h('span', { class: 'level' }, level),
-          h('span', { class: 'nm' }, `${this.nameOf(m.id)}${isMe ? ' (you)' : ''}`, m.muted ? ' 🔇' : '', state && state !== 'connected' ? h('span', { class: 'muted' }, ` · ${state}`) : null),
-          !isMe && info
+          h('span', { class: 'nm' }, `${this.nameOf(m.id)}${isMe ? ' (you)' : ''}`, m.muted ? ' 🔇' : '', status ? h('span', { class: 'muted' }, ` · ${status}`) : null),
+          !isMe && info && VoiceChat.canSetVolume
             ? h('input', {
                 type: 'range',
                 min: '0',

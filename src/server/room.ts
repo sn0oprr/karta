@@ -30,6 +30,7 @@ import {
   SKIN_TONES,
   TARGET_SCORES,
   TURN_TIMERS,
+  VOICE_MAX,
   seatCount,
 } from '../shared/protocol';
 
@@ -223,6 +224,10 @@ export class Room {
         member.socket.emit('left', { reason: 'elsewhere' });
         void member.socket.leave(this.code);
       }
+      // A new connection often arrives before the old one is known to be dead (a phone switching
+      // networks or coming back from the background). Its voice links are gone with it: drop the old
+      // voice entry so the others close their stale connections now; the client rejoins voice itself.
+      if (member.socket?.id !== socket.id) this.voice.delete(id);
       member.socket = socket;
       Object.assign(member, pickProfile(profile));
       const wasAway = !member.connected;
@@ -796,7 +801,7 @@ export class Room {
 
   voiceJoin(id: string, muted: boolean) {
     if (!this.members.has(id)) throw new RoomError('Not in this room.');
-    if (!this.voice.has(id) && this.voice.size >= 12) throw new RoomError('Voice chat is full (12 people).');
+    if (!this.voice.has(id) && this.voice.size >= VOICE_MAX) throw new RoomError(`Voice chat is full (${VOICE_MAX} people).`);
     this.voice.set(id, { muted: !!muted });
     this.broadcast();
   }
