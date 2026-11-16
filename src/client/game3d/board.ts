@@ -32,7 +32,7 @@ import {
   viewYaw,
 } from './layout';
 import type { Stage } from './stage';
-import { FELT_RADIUS, TABLE_RADIUS } from './table';
+import { TABLE_EXTENT, TABLE_RADIUS, tableEdgePoints } from './table';
 import { animator, ease, flatQuat, moveObject, standQuat, wait } from './tween';
 
 export interface BoardCallbacks {
@@ -1161,10 +1161,7 @@ export class Board {
     const dir = new THREE.Vector3(0, Math.sin(pitch), Math.cos(pitch));
     // [point, minNdcY, maxNdcY, maxAbsNdcX]
     const pts: [THREE.Vector3, number, number, number][] = [];
-    const R = FELT_RADIUS;
-    for (let i = 0; i < 16; i++) {
-      const a = (i / 16) * Math.PI * 2;
-      const p = new THREE.Vector3(Math.cos(a) * R, 0, Math.sin(a) * R);
+    for (const p of tableEdgePoints(16)) {
       if (p.z > 2.5) continue; // the near rim may hide behind the hand
       pts.push([p, -1, 0.8, portrait ? 0.99 : 0.96]);
     }
@@ -1174,7 +1171,7 @@ export class Board {
       // Side opponents may be cut a little on narrow screens; the far one may reach the top edge.
       pts.push([head, -1, side ? 0.8 : 0.93, portrait && side ? 1.4 : 0.97]);
     }
-    if (spectating) pts.push([new THREE.Vector3(0, 0, FELT_RADIUS), -0.7, 1, 1]);
+    if (spectating) pts.push([new THREE.Vector3(0, 0, TABLE_EXTENT), -0.7, 1, 1]);
     else pts.push([new THREE.Vector3(0, 0, 2.3), portrait ? -0.36 : -0.42, 1, 1]);
     const cam = new THREE.PerspectiveCamera(fov, aspect, 0.1, 400);
     const fits = (dist: number) => {

@@ -5,6 +5,22 @@ import { addOutline, canvasTexture, makeCanvas, toon, toonMesh } from './materia
 export const TABLE_RADIUS = 5.4;
 export const FELT_RADIUS = 4.95;
 
+/** Distance from the table centre to the playing surface's edge straight in front of a seat. */
+export const TABLE_EXTENT = FELT_RADIUS;
+
+/**
+ * Points along the outer edge of the playing surface (y = 0), used to frame the camera.
+ * Whatever shape the table has, these trace its outline.
+ */
+export function tableEdgePoints(count = 32): THREE.Vector3[] {
+  const pts: THREE.Vector3[] = [];
+  for (let i = 0; i < count; i++) {
+    const a = (i / count) * Math.PI * 2;
+    pts.push(new THREE.Vector3(Math.cos(a) * FELT_RADIUS, 0, Math.sin(a) * FELT_RADIUS));
+  }
+  return pts;
+}
+
 /** Deep "Sidi Bou Said" blue felt with a fine geometric ring near the edge. */
 function feltTexture(): THREE.CanvasTexture {
   const S = 1024;
