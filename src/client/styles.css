@@ -738,11 +738,24 @@ select {
   font-size: 1.05rem;
 }
 
-.turn-banner {
+/* The banner's place is reserved whatever it says (the camera keeps the table cards out of it). */
+.banner-slot {
   position: absolute;
   left: 50%;
   bottom: calc(29% + var(--safe-bottom));
+  width: min(470px, calc(100% - 24px));
+  height: 44px;
   transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.turn-banner {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   pointer-events: none;
   font-family: var(--font-title);
   font-size: 1.15rem;
@@ -768,7 +781,7 @@ select {
 
 .turn-banner.hidden-soft {
   opacity: 0;
-  transform: translateX(-50%) translateY(-10px);
+  transform: translateY(-10px);
 }
 
 .hud-bottom {
@@ -833,8 +846,9 @@ select {
 }
 
 @media (max-width: 720px) {
+  /* Above the docks (which sit at 20% on phones). */
   .spectator-bar {
-    bottom: calc(20% + var(--safe-bottom));
+    bottom: calc(20% + 52px + var(--safe-bottom));
   }
 
   .spectator-bar .chip {
@@ -850,9 +864,11 @@ select {
   pointer-events: none;
 }
 
+/* Placed by its top-left corner from script (beside whichever side of the head is free). */
 .tag {
   position: absolute;
-  transform: translate(-50%, -100%);
+  left: 0;
+  top: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1777,16 +1793,16 @@ select {
 @keyframes wiggle {
   0%,
   100% {
-    transform: translateX(-50%) rotate(0deg);
+    transform: rotate(0deg);
   }
   10% {
-    transform: translateX(-50%) rotate(-3deg) scale(1.05);
+    transform: rotate(-3deg) scale(1.05);
   }
   20% {
-    transform: translateX(-50%) rotate(3deg) scale(1.05);
+    transform: rotate(3deg) scale(1.05);
   }
   30% {
-    transform: translateX(-50%) rotate(0deg);
+    transform: rotate(0deg);
   }
 }
 
@@ -1935,16 +1951,54 @@ select {
     font-size: 1.15rem;
   }
 
+  /* Between the docks, which sit just above the hand. */
+  .banner-slot {
+    left: calc(12px + 3 * 42px + 2 * 8px + 8px);
+    right: calc(12px + 42px + 8px);
+    width: auto;
+    height: 42px;
+    bottom: calc(20% + var(--safe-bottom));
+    transform: none;
+  }
+
+  .hud.voice-on .banner-slot {
+    right: calc(12px + 2 * 42px + 2 * 8px);
+  }
+
   .turn-banner {
-    bottom: calc(20% + 4px + var(--safe-bottom));
     font-size: 0.95rem;
-    max-width: calc(100% - 210px);
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 
   .hud-bottom {
     bottom: calc(20% + var(--safe-bottom));
+  }
+
+  .tag-pill {
+    gap: 4px;
+    padding: 2px 8px 2px 3px;
+    border-width: 2.5px;
+    font-size: 0.8rem;
+    max-width: 150px;
+  }
+
+  .tag .mini-dot,
+  .timer-ring {
+    width: 17px;
+    height: 17px;
+  }
+
+  .tag .team-flag {
+    width: 8px;
+    height: 17px;
+  }
+
+  .tag .icons {
+    font-size: 0.72rem;
+  }
+
+  .bubble {
+    padding: 4px 10px;
+    font-size: 0.85rem;
   }
 
   .chat,
@@ -1980,6 +2034,146 @@ select {
     bottom: 66px;
     left: 10px;
     right: auto;
+  }
+}
+
+/* A phone on its side: a compact HUD hugging the corners, so the table gets the height. */
+@media (max-height: 500px) and (orientation: landscape) {
+  .hud-top {
+    top: calc(6px + var(--safe-top));
+    left: 8px;
+    right: 8px;
+    gap: 6px;
+  }
+
+  .hud-left,
+  .hud-right {
+    gap: 6px;
+  }
+
+  .icon-btn.small {
+    width: 32px;
+    height: 32px;
+    font-size: 0.9rem;
+    border-radius: 11px;
+  }
+
+  .scoreboard {
+    border-width: 2.5px;
+    border-radius: 13px;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .score-team {
+    gap: 6px;
+    padding: 2px 8px;
+  }
+
+  .score-team .names,
+  .hud-right .chip.code-chip {
+    display: none;
+  }
+
+  .score-team .pts {
+    font-size: 1.25rem;
+  }
+
+  .score-mid {
+    padding: 1px 7px;
+    border-width: 2.5px;
+    font-size: 0.6rem;
+    line-height: 1.1;
+  }
+
+  .score-mid .target {
+    font-size: 0.85rem;
+  }
+
+  .hud-bottom,
+  .hud.in-lobby .hud-bottom {
+    bottom: calc(8px + var(--safe-bottom));
+    left: 8px;
+    right: 8px;
+  }
+
+  .dock {
+    gap: 6px;
+  }
+
+  .icon-btn {
+    width: 40px;
+    height: 40px;
+    font-size: 1.05rem;
+    border-radius: 13px;
+  }
+
+  .chat,
+  .emotes,
+  .cafe-pop,
+  .voice-panel {
+    bottom: calc(58px + var(--safe-bottom));
+  }
+
+  .cafe-pop {
+    max-height: calc(100% - 70px - var(--safe-top) - var(--safe-bottom));
+  }
+
+  /* Right of the hand (three cards about 0.19 × the screen height wide each), left of the voice dock. */
+  .banner-slot {
+    left: calc(50% + 31vh + 10px);
+    left: calc(50% + 31dvh + 10px);
+    right: calc(8px + 40px + 8px);
+    width: auto;
+    height: 40px;
+    bottom: calc(8px + var(--safe-bottom));
+    transform: none;
+    justify-content: flex-start;
+  }
+
+  .hud.voice-on .banner-slot {
+    right: calc(8px + 2 * 40px + 6px + 8px);
+  }
+
+  .turn-banner {
+    font-size: 0.85rem;
+    padding: 0.3em 0.85em;
+    border-width: 2.5px;
+  }
+
+  .spectator-bar {
+    bottom: calc(8px + var(--safe-bottom));
+  }
+
+  .spectator-bar .chip {
+    display: none;
+  }
+
+  .tag-pill {
+    gap: 4px;
+    padding: 2px 8px 2px 3px;
+    border-width: 2.5px;
+    font-size: 0.78rem;
+    max-width: 150px;
+  }
+
+  .tag .mini-dot,
+  .timer-ring {
+    width: 16px;
+    height: 16px;
+  }
+
+  .tag .team-flag {
+    width: 8px;
+    height: 16px;
+  }
+
+  .tag .icons {
+    font-size: 0.7rem;
+  }
+
+  .bubble {
+    padding: 3px 9px;
+    font-size: 0.8rem;
   }
 }
 

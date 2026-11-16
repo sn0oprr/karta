@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { animator } from './tween';
+import type { Rect } from './viewFit';
 
 export type FrameCallback = (dt: number, time: number) => void;
 
@@ -12,12 +13,18 @@ export class Stage {
   readonly container: HTMLElement;
   private callbacks = new Set<FrameCallback>();
   private resizeCallbacks = new Set<(w: number, h: number) => void>();
+  private layoutCallbacks = new Set<() => void>();
+  private overlaySource: (() => Rect[]) | null = null;
+  private overlayCheckedAt = 0;
+  private resizeTimer: ReturnType<typeof setTimeout> | null = null;
   private last = performance.now();
   private running = false;
   private shakeAmount = 0;
   private shakeOffset = new THREE.Vector3();
   width = 1;
   height = 1;
+  /** Screen boxes (CSS px) covered by the HUD, refreshed on resize and twice a second. */
+  overlay: Rect[] = [];
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -60,8 +67,20 @@ export class Stage {
     fill.position.set(8, 6, -6);
     this.scene.add(fill);
 
-    window.addEventListener('resize', () => this.resize());
+    // Mobile toolbars and rotations resize the visual viewport, sometimes in several steps.
+    const later = () => this.scheduleResize();
+    window.addEventListener('resize', later);
+    window.addEventListener('orientationchange', later);
+    window.visualViewport?.addEventListener('resize', later);
     this.resize();
+  }
+
+  private scheduleResize() {
+    if (this.resizeTimer) clearTimeout(this.resizeTimer);
+    this.resizeTimer = setTimeout(() => {
+      this.resizeTimer = null;
+      this.resize();
+    }, 90);
   }
 
   onFrame(cb: FrameCallback): () => void {
@@ -75,6 +94,37 @@ export class Stage {
     return () => this.resizeCallbacks.delete(cb);
   }
 
+  /** Called when the HUD layout changes (not on plain resizes, which `onResize` covers). */
+  onLayout(cb: () => void): () => void {
+    this.layoutCallbacks.add(cb);
+    return () => this.layoutCallbacks.delete(cb);
+  }
+
+  /** Where to measure the HUD from (screen boxes the 3D view should keep its content out of). */
+  setOverlaySource(fn: () => Rect[]) {
+    this.overlaySource = fn;
+    this.refreshOverlay(true);
+  }
+
+  /** Re-measures the HUD; true (and listeners told unless `quiet`) if it moved. */
+  refreshOverlay(quiet = false): boolean {
+    this.overlayCheckedAt = performance.now();
+    const next = this.overlaySource?.() ?? [];
+    const prev = this.overlay;
+    const same =
+      next.length === prev.length &&
+      next.every((r, i) => {
+        const q = prev[i]!;
+        return (
+          Math.abs(r.left - q.left) < 2 && Math.abs(r.top - q.top) < 2 && Math.abs(r.right - q.right) < 2 && Math.abs(r.bottom - q.bottom) < 2
+        );
+      });
+    if (same) return false;
+    this.overlay = next;
+    if (!quiet) for (const cb of this.layoutCallbacks) cb();
+    return true;
+  }
+
   resize() {
     const w = this.container.clientWidth || window.innerWidth;
     const h = this.container.clientHeight || window.innerHeight;
@@ -83,6 +133,7 @@ export class Stage {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    this.refreshOverlay(true);
     for (const cb of this.resizeCallbacks) cb(w, h);
   }
 
@@ -102,6 +153,7 @@ export class Stage {
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
     animator.tick(now);
+    if (now - this.overlayCheckedAt > 500) this.refreshOverlay();
     for (const cb of this.callbacks) cb(dt, now / 1000);
     // Shake is applied only for the duration of the render so camera controllers stay unaffected.
     const shaking = this.shakeAmount > 0.002;
