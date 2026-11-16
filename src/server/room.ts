@@ -294,8 +294,8 @@ export class Room {
         if (member.connected || this.destroyed) return;
         member.autopilot = true;
         this.system(`${member.name} is away — playing on autopilot.`);
-        this.broadcast();
         if (this.phase === 'playing' && this.game?.turn === this.seatOf(id)) this.scheduleTurn();
+        this.broadcast();
         if (this.phase === 'roundOver') this.maybeStartNextRound();
       }, TIMING.autopilotGrace);
     } else {
@@ -561,8 +561,7 @@ export class Room {
     this.busyUntil = Date.now();
     const deal = this.game.startRound();
     this.system(`New game — first to ${this.settings.targetScore} points. Yalla!`);
-    this.emitEvents([{ kind: 'gameStart' }, { kind: 'deal', deal }]);
-    this.scheduleTurn();
+    this.advance([{ kind: 'gameStart' }, { kind: 'deal', deal }]);
   }
 
   rematch(id: string) {
@@ -628,8 +627,7 @@ export class Room {
       events.push({ kind: 'roundEnd', result: out.round });
       this.onRoundEnd(out.round);
     }
-    this.emitEvents(events);
-    this.scheduleTurn();
+    this.advance(events);
     if (this.phase === 'roundOver') this.maybeStartNextRound();
   }
 
@@ -684,8 +682,7 @@ export class Room {
     this.lastPlay = null;
     this.busyUntil = Math.max(this.busyUntil, Date.now());
     const deal = this.game.startRound();
-    this.emitEvents([{ kind: 'deal', deal }]);
-    this.scheduleTurn();
+    this.advance([{ kind: 'deal', deal }]);
   }
 
   private clearActionTimer() {
@@ -835,12 +832,18 @@ export class Room {
     this.lastActivity = Date.now();
   }
 
-  private emitEvents(events: InternalEvent[]) {
+  /**
+   * Moves the table on after `events`: paces their animations, arms what comes next
+   * (bot move, turn deadline, next hand), then broadcasts. Arming first is what puts
+   * the new `turnDeadline` / `nextRoundAt` in the view the clients receive.
+   */
+  private advance(events: InternalEvent[]) {
     const n = this.seats.length;
     const now = Date.now();
     let busy = Math.max(now, this.busyUntil);
     for (const ev of events) busy += eventDuration(ev, n);
     this.busyUntil = busy;
+    this.scheduleTurn();
     this.broadcast(events);
   }
 

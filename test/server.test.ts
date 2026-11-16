@@ -321,6 +321,38 @@ describe('server', () => {
     expect((await p.call('join', { code })).ok).toBe(false);
   });
 
+  it('sends the turn deadline with each human turn, and the next-hand time with the results', async () => {
+    const a = client('rosa-secret', 'Rosa');
+    const code = (await a.call<{ ok: boolean; code: string }>('create', { settings: { turnSeconds: 15 } })).code;
+    const b = client('sami-secret', 'Sami');
+    await b.call('join', { code });
+    await a.waitFor(() => a.room?.seats[1], 4000, 'both seated');
+    // Keep every view: with the test timings the results screen only lasts a moment.
+    const views: RoomView[] = [];
+    a.socket.on('room', (m) => views.push(m.room));
+    expect(await a.call('start')).toEqual({ ok: true });
+
+    // The first turn comes with its deadline, for the player to move and for the opponent.
+    for (const c of [a, b]) {
+      const view = await c.waitFor(() => c.room?.phase === 'playing' && c.room, 4000, 'deal');
+      expect(view.game!.turnDeadline).toBeGreaterThan(view.serverTime + 14_000);
+      expect(view.game!.turnDeadline).toBeLessThanOrEqual(view.serverTime + 16_000);
+    }
+
+    // Once the first player moves, the other one gets a deadline of their own.
+    const first = a.room!.game!;
+    const mover = first.turn === a.room!.you.seat ? a : b;
+    const g = mover.room!.game!;
+    expect(await mover.call('play', legalMovesFor(g.myHand!, g.table)[0])).toEqual({ ok: true });
+    const next = await a.waitFor(() => a.room!.game!.turn !== first.turn && a.room, 4000, 'next turn');
+    expect(next.game!.turnDeadline).toBeGreaterThan(first.turnDeadline!);
+
+    // The results screen counts down to the next hand.
+    await playUntil([a, b], () => views.some((v) => v.phase !== 'playing'));
+    const results = views.find((v) => v.phase === 'roundOver')!;
+    expect(results.game!.nextRoundAt).toBeGreaterThan(results.serverTime);
+  }, 60_000);
+
   it('shares characters and drinks, and relays sips to the rest of the table', async () => {
     const a = client('lina-secret', 'Lina', { character: 'hajj', skin: 2, drink: 'chicha' });
     const b = client('omar-secret', 'Omar'); // an older client: no look in the handshake
