@@ -1,9 +1,9 @@
 import { type Card, cardShort } from '../../shared/cards';
-import { AVATAR_COLORS, CHAT_MAX, type ChatMessage, EMOTES, type EmoteId, type RoomView } from '../../shared/protocol';
+import { AVATAR_COLORS, CHAT_MAX, type ChatMessage, EMOTES, type EmoteId, type GameKind, type RoomView } from '../../shared/protocol';
 import { sfx } from '../sfx';
 import { VoiceChat } from '../voice';
 import { h, modal } from './dom';
-import { miniCard } from './results';
+import { miniCard } from './miniCard';
 
 // ───────────────────────────── chat ─────────────────────────────
 
@@ -310,7 +310,11 @@ export function chooseCapture(card: Card, options: Card[][], onHover: (ids: stri
 
 // ───────────────────────────── rules ─────────────────────────────
 
-export function showRules() {
+export function showRules(game: GameKind = 'chkobba') {
+  if (game === 'belote') {
+    showBeloteRules();
+    return;
+  }
   const body = h(
     'div',
     { class: 'rules' },
@@ -353,6 +357,94 @@ export function showRules() {
       h('li', null, 'Keys ', h('span', { class: 'kbd' }, '1'), ' ', h('span', { class: 'kbd' }, '2'), ' ', h('span', { class: 'kbd' }, '3'), ' select a card, ', h('span', { class: 'kbd' }, 'Enter'), ' plays it.'),
       h('li', null, 'Tap your drink on the table (or press ', h('span', { class: 'kbd' }, 'D'), ') to take a sip — or a puff of chicha. Change your order and your character with the ☕ button.'),
       h('li', null, 'In voice chat, hold ', h('span', { class: 'kbd' }, 'V'), ' to talk while muted.'),
+    ),
+  );
+  const m = modal(body);
+  body.appendChild(h('div', { class: 'modal-actions' }, h('button', { class: 'btn', onclick: () => m.close() }, 'Yalla, let’s play!')));
+}
+
+function showBeloteRules() {
+  const kbd = (k: string) => h('span', { class: 'kbd' }, k);
+  const values = (title: string, list: [string, string][]) =>
+    h(
+      'div',
+      { class: 'values' },
+      h('b', null, title),
+      h('div', { class: 'value-row' }, ...list.map(([card, pts]) => h('span', { class: 'value' }, h('span', { class: 'v-card' }, card), h('span', { class: 'v-pts' }, pts)))),
+    );
+  const body = h(
+    'div',
+    { class: 'rules' },
+    h('h2', null, 'How to play Belote'),
+    h('p', null, 'Belote (بلوت) is the French trick-taking game played in cafés all over Tunisia. Four players in two teams: your partner sits opposite you.'),
+    h('h3', null, 'The cards'),
+    h('p', null, '32 cards, 7 to Ace. The trump suit ranks differently from the others:'),
+    values('Trumps', [
+      ['J', '20'],
+      ['9', '14'],
+      ['A', '11'],
+      ['10', '10'],
+      ['K', '4'],
+      ['Q', '3'],
+      ['8', '0'],
+      ['7', '0'],
+    ]),
+    values('Other suits', [
+      ['A', '11'],
+      ['10', '10'],
+      ['K', '4'],
+      ['Q', '3'],
+      ['J', '2'],
+      ['9', '0'],
+      ['8', '0'],
+      ['7', '0'],
+    ]),
+    h('p', null, 'The last trick is worth 10 more (', h('i', null, 'dix de der'), '): 162 points in a hand.'),
+    h('h3', null, 'Taking'),
+    h(
+      'ul',
+      null,
+      h('li', null, 'Everyone gets 5 cards and the next one is turned up.'),
+      h('li', null, 'In turn, from the dealer’s right: ', h('b', null, 'take'), ' — the turned card’s suit becomes trumps — or ', h('b', null, 'pass'), '.'),
+      h('li', null, 'If all four pass, a second round: name any other suit as trumps, or pass. If everyone passes again, the cards are dealt anew.'),
+      h('li', null, 'The taker picks up the turned card, then everyone is dealt up to 8 cards.'),
+    ),
+    h('h3', null, 'Tricks'),
+    h(
+      'ul',
+      null,
+      h('li', null, 'The player on the dealer’s right leads; whoever wins a trick leads the next.'),
+      h('li', null, h('b', null, 'Follow suit'), ' if you can. When trumps are led, play a higher trump if you can.'),
+      h('li', null, 'If you cannot follow: when your partner is winning the trick you may play anything; otherwise you ', h('b', null, 'must trump'), ' — higher than any trump already played if you can.'),
+      h('li', null, 'The best trump wins the trick, else the best card of the suit led.'),
+      h('li', null, 'King and Queen of trumps in one hand: say ', h('b', null, 'Belote'), ' and ', h('b', null, 'Rebelote'), ' as you play them, for 20 points.'),
+    ),
+    h('h3', null, 'Announcements (if the table plays them)'),
+    h(
+      'ul',
+      null,
+      h('li', null, h('b', null, 'Tierce'), ' (3 in a row in a suit) 20 · ', h('b', null, 'Cinquante'), ' (4) 50 · ', h('b', null, 'Cent'), ' (5 or more) 100.'),
+      h('li', null, h('b', null, 'Carré'), ' (four of a kind): jacks 200, nines 150, aces, tens, kings or queens 100.'),
+      h('li', null, 'They are announced with your first card. Only the team with the best one scores — all of theirs.'),
+    ),
+    h('h3', null, 'Scoring'),
+    h(
+      'ul',
+      null,
+      h('li', null, 'The takers must make ', h('b', null, 'more than the defenders'), ' (belote and announcements count). Then both teams score what they made.'),
+      h('li', null, 'If they fail, they are ', h('b', null, 'dedans'), ': the defenders score 162 plus all announcements (belote stays with its team).'),
+      h('li', null, 'A tie is a ', h('b', null, 'litige'), ': the defenders score theirs, and the takers’ points wait for whoever wins the next hand.'),
+      h('li', null, 'All eight tricks is a ', h('b', null, 'capot'), ': 250 instead of 162.'),
+    ),
+    h('p', null, 'First team to reach the target (501, 701 or 1001) at the end of a hand wins.'),
+    h('h3', null, 'Controls'),
+    h(
+      'ul',
+      null,
+      h('li', null, 'Click a card to play it; on touch screens tap to select, tap again to play. Cards the rules don’t allow right now are shaded.'),
+      h('li', null, 'Keys ', kbd('1'), '–', kbd('8'), ' select a card, ', kbd('Enter'), ' plays it.'),
+      h('li', null, 'The gold token in front of the taker shows the trumps.'),
+      h('li', null, 'Tap your drink (or press ', kbd('D'), ') to take a sip. In voice chat, hold ', kbd('V'), ' to talk while muted.'),
     ),
   );
   const m = modal(body);

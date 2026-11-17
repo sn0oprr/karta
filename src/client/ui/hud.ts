@@ -1,8 +1,10 @@
+import { suitName, suitSymbol } from '../../shared/cards';
 import { teamOf } from '../../shared/chkobba';
-import type { RoomView } from '../../shared/protocol';
+import type { BeloteView, RoomView } from '../../shared/protocol';
 import type { Rect } from '../game3d/viewFit';
 import { sfx } from '../sfx';
 import { copyText, h, toast } from './dom';
+import { miniCard } from './miniCard';
 
 export interface HudActions {
   leave: () => void;
@@ -33,6 +35,8 @@ export class Hud {
   readonly el: HTMLElement;
   private scoreA = h('div', { class: 'pts' }, '0');
   private scoreB = h('div', { class: 'pts' }, '0');
+  private teamA = h('div', { class: 'score-team a' }, this.scoreA);
+  private teamB = h('div', { class: 'score-team b' }, this.scoreB);
   private namesA = h('div', { class: 'names' });
   private namesB = h('div', { class: 'names' });
   private mid = h('div', { class: 'score-mid' });
@@ -55,16 +59,28 @@ export class Hud {
   private micBtn: HTMLButtonElement;
   private soundBtn: HTMLButtonElement;
   private spectatorBar = h('div', { class: 'spectator-bar hidden' });
+  /** Belote: everyone may look at the last trick. */
+  private lastTrickBtn: HTMLButtonElement;
+  private lastTrickPanel = h('div', { class: 'panel last-trick hidden' });
+  private lastTrickOpen = false;
+  private lastTrickKey = '';
   private lastScores: [number, number] = [0, 0];
   private seatMenuOpen = false;
   private lastTurnKey = '';
   private code = '';
 
   constructor(private readonly actions: HudActions) {
+    this.teamA.append(this.namesA);
+    this.teamB.append(this.namesB);
     setInterval(() => this.tickCountdown(), 250);
     this.codeChip.addEventListener('click', async () => {
       if (await copyText(`${location.origin}/room/${this.code}`)) toast('Invite link copied!');
     });
+    this.lastTrickBtn = h(
+      'button',
+      { class: 'btn ghost icon-btn small hidden', title: 'Look at the last trick', onclick: () => this.toggleLastTrick() },
+      '🃏',
+    );
     this.soundBtn = h(
       'button',
       {
@@ -88,15 +104,16 @@ export class Hud {
         h(
           'div',
           { class: 'scoreboard' },
-          h('div', { class: 'score-team a' }, this.scoreA, this.namesA),
+          this.teamA,
           this.mid,
-          h('div', { class: 'score-team b' }, this.scoreB, this.namesB),
+          this.teamB,
         ),
       ),
       h(
         'div',
         { class: 'hud-right' },
         this.codeChip,
+        this.lastTrickBtn,
         this.soundBtn,
         h('button', { class: 'btn ghost icon-btn small', title: 'How to play', onclick: () => actions.rules() }, '?'),
       ),
@@ -123,7 +140,7 @@ export class Hud {
     );
     this.top = top;
     this.bottom = bottom;
-    this.el = h('div', { class: 'hud' }, top, this.bannerSlot, bottom, this.spectatorBar, this.bannerProbe);
+    this.el = h('div', { class: 'hud' }, top, this.bannerSlot, bottom, this.spectatorBar, this.lastTrickPanel, this.bannerProbe);
     window.addEventListener('resize', () => this.fitBanner());
     void document.fonts?.ready.then(() => {
       this.bannerFitKey = '';
@@ -187,6 +204,38 @@ export class Hud {
     this.banner.classList.toggle('urgent', left <= 5);
   }
 
+  private toggleLastTrick(force?: boolean) {
+    this.lastTrickOpen = force ?? !this.lastTrickOpen;
+    this.lastTrickPanel.classList.toggle('hidden', !this.lastTrickOpen);
+    if (this.lastTrickOpen) sfx.play('click');
+  }
+
+  /** Belote: the last-trick button stays for the whole game (so the HUD keeps its shape); it opens once a trick is in. */
+  private syncLastTrick(room: RoomView) {
+    const g = room.game;
+    const belote = g?.kind === 'belote' && room.phase !== 'lobby';
+    this.lastTrickBtn.classList.toggle('hidden', !belote);
+    const last = belote && room.phase === 'playing' ? (g as BeloteView).lastTrick : null;
+    this.lastTrickBtn.disabled = !last;
+    if (!last) {
+      this.lastTrickKey = '';
+      this.toggleLastTrick(false);
+      return;
+    }
+    const key = last.plays.map((p) => p.card.id).join();
+    if (key === this.lastTrickKey) return;
+    this.lastTrickKey = key;
+    const name = (seat: number) => (seat === room.you.seat ? 'You' : (room.seats[seat]?.name ?? '?'));
+    this.lastTrickPanel.replaceChildren(
+      h('div', { class: 'label' }, 'Last trick'),
+      h(
+        'div',
+        { class: 'last-trick-cards' },
+        ...last.plays.map((p) => h('div', { class: `lt-card ${p.seat === last.winner ? 'win' : ''}` }, miniCard(p.card.id, 40), h('span', null, name(p.seat)))),
+      ),
+    );
+  }
+
   /** The café button shows what you are drinking. */
   setDrink(icon: string) {
     this.cafeBtn.textContent = icon;
@@ -217,6 +266,7 @@ export class Hud {
   update(room: RoomView, opts: { myTurnReady: boolean; busy: boolean; clockOffset: number }) {
     this.code = room.code;
     this.codeChip.textContent = `# ${room.code}`;
+    this.syncLastTrick(room);
     const g = room.game;
     const n = room.seats.length;
     const my = room.you.seat;
@@ -237,11 +287,19 @@ export class Hud {
       }
     }
     this.lastScores = [scores[0], scores[1]];
+    // Belote: the trump suit in the middle, and a badge on the team that took.
+    const trump = g?.kind === 'belote' && g.stage !== 'bidding' ? g.trump : null;
+    const takers = trump && g?.kind === 'belote' && g.taker !== null ? teamOf(g.taker) : null;
     this.mid.replaceChildren(
       h('div', null, 'to'),
       h('div', { class: 'target' }, String(room.settings.targetScore)),
-      ...(g ? [h('div', null, `hand ${g.round}`)] : []),
+      ...(trump ? [h('div', { class: `trump suit-${trump}`, title: `${suitName(trump)} are trumps` }, suitSymbol(trump))] : g ? [h('div', null, `hand ${g.round}`)] : []),
     );
+    for (const [t, el] of [[0, this.teamA], [1, this.teamB]] as const) {
+      el.classList.toggle('taker', takers === t);
+      if (takers === t && trump) el.dataset.trump = suitSymbol(trump);
+      el.title = takers === t ? 'They took: they need more than half the points' : '';
+    }
 
     // Turn banner.
     let text = '';
@@ -249,11 +307,14 @@ export class Hud {
     if (room.phase === 'playing' && g) {
       const p = room.seats[g.turn];
       const narrow = matchMedia(COMPACT).matches;
+      const bidding = g.kind === 'belote' && g.stage === 'bidding';
       if (g.turn === my) {
         mine = true;
-        text = narrow ? 'Your turn!' : opts.myTurnReady ? 'Your turn — pick a card!' : 'Your turn…';
+        if (g.kind === 'belote' && bidding) {
+          text = narrow ? 'Take or pass?' : g.bidRound === 1 && g.upCard ? `Your call — take ${suitSymbol(g.upCard.suit)} or pass?` : 'Your call — name the trumps or pass';
+        } else text = narrow ? 'Your turn!' : opts.myTurnReady ? 'Your turn — pick a card!' : 'Your turn…';
       } else if (p) text = narrow ? `${p.name}…` : p.bot ? `${p.name} is thinking…` : `${p.name}'s turn`;
-      if (g.deckCount > 0 && mine && !narrow) text += `  ·  deck ${g.deckCount}`;
+      if (g.kind === 'chkobba' && g.deckCount > 0 && mine && !narrow) text += `  ·  deck ${g.deckCount}`;
     }
     const key = `${text}|${mine}`;
     if (key !== this.lastTurnKey) {
@@ -267,11 +328,13 @@ export class Hud {
     this.turnSeconds = room.settings.turnSeconds;
     this.tickCountdown();
     // The short wordings above (with the longest countdown), for checking where the banner fits.
+    const clock = room.settings.turnSeconds > 0 ? `  ⏱ ${room.settings.turnSeconds}s` : '';
     this.bannerTexts =
       my === null
         ? []
         : [
-            `Your turn!${room.settings.turnSeconds > 0 ? `  ⏱ ${room.settings.turnSeconds}s` : ''}`,
+            `Your turn!${clock}`,
+            ...(room.settings.game === 'belote' ? [`Take or pass?${clock}`] : []),
             ...room.seats.flatMap((p, i) => (p && i !== my ? [`${p.name}…`] : [])),
           ];
     this.fitBanner();

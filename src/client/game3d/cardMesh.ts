@@ -1,6 +1,5 @@
 import * as THREE from 'three';
-import { parseCard } from '../../shared/cards';
-import { CARD_ASPECT, CARD_CORNER, makeCardCanvas } from './cardArt';
+import { CARD_ASPECT, CARD_CORNER, faceOf, makeCardCanvas } from './cardArt';
 import { makeCanvas } from './materials';
 
 export const CARD_W = 1.2;
@@ -144,7 +143,7 @@ function makeTexture(canvas: HTMLCanvasElement): THREE.CanvasTexture {
 export function cardCanvas(id: string | 'back'): HTMLCanvasElement {
   let c = textureCanvases.get(id);
   if (!c) {
-    c = makeCardCanvas(id === 'back' ? 'back' : parseCard(id), TEX_WIDTH);
+    c = makeCardCanvas(id === 'back' ? 'back' : faceOf(id), TEX_WIDTH);
     textureCanvases.set(id, c);
   }
   return c;
@@ -226,11 +225,16 @@ function getGlowTexture(): THREE.CanvasTexture {
 
 // ─────────────────────────────── objects ───────────────────────────────
 
+let dimGeometry: THREE.ShapeGeometry | null = null;
+let dimMaterial: THREE.MeshBasicMaterial | null = null;
+
 export class CardObject {
   readonly root = new THREE.Group();
   readonly mesh: THREE.Mesh;
   readonly glow: THREE.Mesh;
   private glowMat: THREE.MeshBasicMaterial;
+  /** A shade over the face (cards that may not be played), made on first use. */
+  private dim: THREE.Mesh | null = null;
   cardId: string | null = null;
   /** Free-form tag used by the board (e.g. "hand", "table", "pile"). */
   role = '';
@@ -275,6 +279,24 @@ export class CardObject {
 
   get glowOpacity() {
     return this.glowMat.opacity;
+  }
+
+  get dimmed(): boolean {
+    return !!this.dim?.visible;
+  }
+
+  /** Shades the face, for a card the rules do not allow right now. */
+  setDim(on: boolean) {
+    if (!on && !this.dim) return;
+    if (!this.dim) {
+      dimGeometry ??= new THREE.ShapeGeometry(roundedRectShape(CARD_W, CARD_H, CARD_CORNER * CARD_W), 5);
+      dimMaterial ??= new THREE.MeshBasicMaterial({ color: '#1d1b2e', transparent: true, opacity: 0.4, depthWrite: false });
+      this.dim = new THREE.Mesh(dimGeometry, dimMaterial);
+      this.dim.position.z = CARD_T / 2 + 0.002;
+      this.dim.raycast = () => {};
+      this.root.add(this.dim);
+    }
+    this.dim.visible = on;
   }
 
   /** Puts the halo on the front side (for face-down cards, so it sits underneath them). */

@@ -20,9 +20,11 @@
  *    wins, and a tie means another hand is played.
  */
 import { type Card, makeDeck, shuffle } from './cards';
+import { type Team, teamOf } from './teams';
+
+export { type Team, teamOf };
 
 export type SeatCount = 2 | 4;
-export type Team = 0 | 1;
 
 export interface Move {
   cardId: string;
@@ -104,10 +106,6 @@ export interface PlayOutcome {
 
 const HAND_SIZE = 3;
 const INITIAL_TABLE = 4;
-
-export function teamOf(seat: number): Team {
-  return (seat % 2) as Team;
-}
 
 /**
  * All captures a card can make on the given table.
