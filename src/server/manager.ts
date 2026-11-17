@@ -253,7 +253,7 @@ export class RoomManager {
     socket.on('kick', guard((room, p: { playerId: string }) => room.kick(data.id, String(p?.playerId))));
     socket.on('start', guard((room) => room.start(data.id)));
     socket.on('play', guard((room, move) => room.play(data.id, move)));
-    socket.on('bid', guard((room, p: { suit: unknown }) => room.bid(data.id, p?.suit === undefined ? undefined : p.suit)));
+    socket.on('bid', guard((room, call: unknown) => room.bid(data.id, call)));
     socket.on('continue', () => currentRoom()?.continueRound(data.id));
     socket.on('rematch', guard((room) => room.rematch(data.id)));
     socket.on('toLobby', guard((room) => room.toLobby(data.id)));

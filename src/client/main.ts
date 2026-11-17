@@ -3,8 +3,8 @@ import '@fontsource/fredoka/400.css';
 import '@fontsource/fredoka/600.css';
 import '@fontsource/fredoka/700.css';
 import './styles.css';
-import { makeDeck, suitSymbol } from '../shared/cards';
-import { declarationName, makeBeloteDeck } from '../shared/belote';
+import { makeDeck } from '../shared/cards';
+import { callLabel, contractLabel, makeBeloteDeck } from '../shared/belote';
 import {
   DRINKS,
   type DrinkId,
@@ -108,26 +108,25 @@ class App {
         this.net.socket.emit('sip');
       },
       drinkSound: (drink, pan) => drinkAudio.play(drink, { pan }),
-      onBid: (seat, bid) => {
-        sfx.play(bid.suit ? 'select' : 'pop');
-        this.seatBubble(seat, bid.suit ? `I take ${suitSymbol(bid.suit)}!` : 'Pass');
+      onBid: ({ seat, call }) => {
+        sfx.play(call.type === 'pass' ? 'pop' : 'select');
+        this.seatBubble(seat, call.type === 'contre' || call.type === 'surcontre' ? `⚔️ ${callLabel(call)}` : callLabel(call));
+      },
+      onContract: (contract, coinche) => {
+        if (contract.value === 'kabbout') this.bigBanner('KABBOUT!', `${this.seatName(contract.seat)} will take every trick`, 'small');
+        else if (coinche > 1) this.bigBanner(coinche === 4 ? 'SURCONTRE ×4' : 'CONTRE ×2', `${contractLabel(contract)} — ${this.seatName(contract.seat)}`, 'small');
       },
       onBelote: (seat, word) => this.seatBubble(seat, word === 'belote' ? '👑 Belote!' : '👑 Rebelote!'),
-      onDeclare: (seat, declared) => this.seatBubble(seat, `📣 ${declared.map((d) => declarationName(d)).join(' + ')}!`),
-      onDeclResult: (result) => {
-        if (result.team === null) return;
-        const room = this.displayed ?? this.room;
-        const mine = room?.you.seat !== null && room?.you.seat !== undefined && teamOf(room.you.seat) === result.team;
-        const who = mine ? 'Your team scores' : `${this.teamLabel(result.team)} score`;
-        toast(`📣 ${who} ${result.counted.map((d) => declarationName(d)).join(', ')} (+${result.points[result.team]})`, 'info', 3600);
-      },
       onRedeal: () => toast('Everybody passed — new deal 🃏', 'info', 2600),
       onBeloteEnd: (r) => {
-        const room = this.displayed ?? this.room;
-        const name = (seat: number) => (seat === room?.you.seat ? 'You' : (room?.seats[seat]?.name ?? 'Someone'));
-        if (r.capot !== null) this.bigBanner('CAPOT!', `${this.teamLabel(r.capot)} took every trick!`);
-        else if (r.outcome === 'dedans') this.bigBanner('DEDANS!', `${name(r.taker)} took ${suitSymbol(r.trump)} and fell short`, 'coral');
-        else if (r.outcome === 'litige') this.bigBanner('LITIGE', `${r.reserveOut} points wait for the next hand`, 'small');
+        const takers = teamOf(r.contract.seat);
+        const who = this.seatName(r.contract.seat);
+        if (r.contract.value === 'kabbout') {
+          if (r.outcome === 'made') this.bigBanner('KABBOUT!', `${this.teamLabel(takers)} took every trick!`);
+          else this.bigBanner('KABBOUT LOST', `${who} lost a trick`, 'coral');
+        } else if (r.outcome === 'failed') {
+          this.bigBanner('CHUTE!', r.early ? `${who} can no longer make ${r.contract.value}` : `${who} missed ${r.contract.value}`, 'coral');
+        } else if (r.capot === takers) this.bigBanner('CAPOT!', `${this.teamLabel(takers)} took every trick!`);
       },
     });
     this.studio.sound = (drink) => drinkAudio.play(drink);
@@ -229,8 +228,8 @@ class App {
       toLobby: () => void this.act('toLobby'),
       leave: () => this.leaveRoom(),
     });
-    this.bid = new BidPanel(async (suit) => {
-      const res = await this.net.call('bid', { suit });
+    this.bid = new BidPanel(async (call) => {
+      const res = await this.net.call('bid', call);
       if (!res.ok) toast(res.error, 'error');
       return res.ok;
     });
@@ -381,6 +380,12 @@ class App {
     if (p) this.tags.bubble(p.id, text);
   }
 
+  /** A player's name ("You" for the local player). */
+  private seatName(seat: number): string {
+    const room = this.displayed ?? this.room;
+    return seat === room?.you.seat ? 'You' : (room?.seats[seat]?.name ?? 'Someone');
+  }
+
   private teamLabel(team: number): string {
     const room = this.displayed ?? this.room;
     if (!room) return '';
@@ -423,7 +428,7 @@ class App {
     document.addEventListener('visibilitychange', stop);
   }
 
-  /** A big word across the table (CHKOBBA!, CAPOT!, DEDANS!) with a line under it. */
+  /** A big word across the table (CHKOBBA!, CAPOT!, CHUTE!) with a line under it. */
   private bigBanner(word: string, who: string, style = '') {
     const el = h('div', { class: `big-banner ${style}` }, h('div', { class: 'word' }, word), h('div', { class: 'who' }, who));
     uiRoot.appendChild(el);

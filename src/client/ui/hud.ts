@@ -1,5 +1,6 @@
 import { suitName, suitSymbol } from '../../shared/cards';
 import { teamOf } from '../../shared/chkobba';
+import { contractLabel } from '../../shared/belote';
 import type { BeloteView, RoomView } from '../../shared/protocol';
 import type { Rect } from '../game3d/viewFit';
 import { sfx } from '../sfx';
@@ -287,18 +288,36 @@ export class Hud {
       }
     }
     this.lastScores = [scores[0], scores[1]];
-    // Belote: the trump suit in the middle, and a badge on the team that took.
-    const trump = g?.kind === 'belote' && g.stage !== 'bidding' ? g.trump : null;
-    const takers = trump && g?.kind === 'belote' && g.taker !== null ? teamOf(g.taker) : null;
-    this.mid.replaceChildren(
-      h('div', null, 'to'),
-      h('div', { class: 'target' }, String(room.settings.targetScore)),
-      ...(trump ? [h('div', { class: `trump suit-${trump}`, title: `${suitName(trump)} are trumps` }, suitSymbol(trump))] : g ? [h('div', null, `hand ${g.round}`)] : []),
-    );
+    // Belote: the contract in the middle (the best bid during the auction), and a ring on the team that took.
+    const contract = g?.kind === 'belote' ? g.contract : null;
+    const coinche = g?.kind === 'belote' ? g.coinche : 1;
+    const takers = contract && g?.kind === 'belote' && g.stage !== 'bidding' ? teamOf(contract.seat) : null;
+    const contractInfo = (): HTMLElement[] => {
+      if (!contract) return g ? [h('div', null, `hand ${g.round}`)] : [];
+      const value = contract.value === 'kabbout' ? 'Kabbout' : String(contract.value);
+      return [
+        h(
+          'div',
+          {
+            class: 'contract',
+            title: `${takers === null ? 'Best bid' : 'Contract'}: ${contractLabel(contract)}${coinche > 1 ? `, doubled ×${coinche}` : ''} — ${suitName(contract.suit)} as trumps`,
+          },
+          h('span', { class: 'value' }, value),
+          h('span', { class: `trump suit-${contract.suit}` }, suitSymbol(contract.suit)),
+          ...(coinche > 1 ? [h('span', { class: 'coinche' }, `×${coinche}`)] : []),
+        ),
+      ];
+    };
+    this.mid.replaceChildren(h('div', null, 'to'), h('div', { class: 'target' }, String(room.settings.targetScore)), ...contractInfo());
     for (const [t, el] of [[0, this.teamA], [1, this.teamB]] as const) {
       el.classList.toggle('taker', takers === t);
-      if (takers === t && trump) el.dataset.trump = suitSymbol(trump);
-      el.title = takers === t ? 'They took: they need more than half the points' : '';
+      if (takers === t && contract) el.dataset.trump = suitSymbol(contract.suit);
+      el.title =
+        takers === t && contract
+          ? contract.value === 'kabbout'
+            ? 'They bid Kabbout: they must take every trick'
+            : `They bid ${contract.value}: they need that much, and more than the other team`
+          : '';
     }
 
     // Turn banner.
@@ -311,7 +330,8 @@ export class Hud {
       if (g.turn === my) {
         mine = true;
         if (g.kind === 'belote' && bidding) {
-          text = narrow ? 'Take or pass?' : g.bidRound === 1 && g.upCard ? `Your call — take ${suitSymbol(g.upCard.suit)} or pass?` : 'Your call — name the trumps or pass';
+          if (g.coinche > 1) text = narrow ? 'Surcontre?' : 'Contré! — surcontre or pass?';
+          else text = narrow ? 'Your bid?' : g.contract ? `Your call — over ${contractLabel(g.contract)}, or pass?` : 'Your call — bid or pass?';
         } else text = narrow ? 'Your turn!' : opts.myTurnReady ? 'Your turn — pick a card!' : 'Your turn…';
       } else if (p) text = narrow ? `${p.name}…` : p.bot ? `${p.name} is thinking…` : `${p.name}'s turn`;
       if (g.kind === 'chkobba' && g.deckCount > 0 && mine && !narrow) text += `  ·  deck ${g.deckCount}`;
@@ -334,7 +354,7 @@ export class Hud {
         ? []
         : [
             `Your turn!${clock}`,
-            ...(room.settings.game === 'belote' ? [`Take or pass?${clock}`] : []),
+            ...(room.settings.game === 'belote' ? [`Your bid?${clock}`, `Surcontre?${clock}`] : []),
             ...room.seats.flatMap((p, i) => (p && i !== my ? [`${p.name}…`] : [])),
           ];
     this.fitBanner();

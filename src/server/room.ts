@@ -397,10 +397,6 @@ export class Room {
       if (!info.targets.includes(patch.targetScore)) throw new RoomError('Invalid target.');
       next.targetScore = patch.targetScore;
     }
-    if (patch.announcements !== undefined) {
-      if (typeof patch.announcements !== 'boolean') throw new RoomError('Invalid setting.');
-      next.announcements = patch.announcements;
-    }
     if (patch.turnSeconds !== undefined) {
       if (!TURN_TIMERS.includes(patch.turnSeconds)) throw new RoomError('Invalid timer.');
       next.turnSeconds = patch.turnSeconds;
@@ -547,9 +543,9 @@ export class Room {
     this.act(id, { type: 'play', move });
   }
 
-  /** Belote: a player takes with a trump suit, or passes (null). */
-  bid(id: string, suit: unknown) {
-    this.act(id, { type: 'bid', suit });
+  /** Belote: a call in the auction (bid, pass, contre or surcontre). */
+  bid(id: string, call: unknown) {
+    this.act(id, { type: 'bid', call });
   }
 
   private act(id: string, action: Action) {

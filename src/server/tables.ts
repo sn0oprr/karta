@@ -3,24 +3,24 @@
  * table game applies (and validates) actions, decides for bots, and shows each viewer what they may see.
  */
 import { botContext, chooseBotMove } from '../shared/bot';
-import { SUITS, type Suit, cardShort, suitSymbol } from '../shared/cards';
+import { cardShort } from '../shared/cards';
 import { ChkobbaGame, type DealInfo, type Move, type PlayInfo, type RoundResult } from '../shared/chkobba';
 import {
+  type AuctionAction,
+  type AuctionCall,
   BeloteGame,
   type BeloteDealInfo,
   type BelotePlayInfo,
   type BeloteRoundResult,
-  type BeloteTakeInfo,
   type BeloteTrickInfo,
-  type BidInfo,
-  type DeclarationsResult,
-  declarationName,
+  type ContractInfo,
+  contractLabel,
   illegalReason,
-  publicDeclaration,
+  parseCall,
 } from '../shared/belote';
-import { beloteBotContext, chooseBeloteBid, chooseBeloteCard } from '../shared/beloteBot';
+import { beloteBotContext, chooseBeloteCall, chooseBeloteCard } from '../shared/beloteBot';
 import type { BeloteView, BotLevelSetting, ChkobbaView, GameEvent, GameKind, GameView, RoomSettings } from '../shared/protocol';
-import type { Team } from '../shared/teams';
+import { type Team, teamOf } from '../shared/teams';
 import { RoomError } from './errors';
 import { TIMING } from './timing';
 
@@ -30,14 +30,14 @@ export type InternalEvent =
   | { kind: 'play'; play: PlayInfo; auto: boolean }
   | { kind: 'roundEnd'; result: RoundResult }
   | { kind: 'beloteDeal'; deal: BeloteDealInfo }
-  | { kind: 'beloteBid'; bid: BidInfo; auto: boolean }
-  | { kind: 'beloteTake'; take: BeloteTakeInfo }
+  | { kind: 'beloteBid'; action: AuctionAction; auto: boolean }
+  | { kind: 'beloteContract'; info: ContractInfo }
   | { kind: 'belotePlay'; play: BelotePlayInfo; auto: boolean }
-  | { kind: 'beloteTrick'; trick: BeloteTrickInfo; declarations: DeclarationsResult | null }
+  | { kind: 'beloteTrick'; trick: BeloteTrickInfo }
   | { kind: 'beloteEnd'; result: BeloteRoundResult };
 
-/** What a player does: play a card, or (Belote) bid. Payloads are untrusted until the table checks them. */
-export type Action = { type: 'play'; move: unknown } | { type: 'bid'; suit: unknown };
+/** What a player does: play a card, or (Belote) make a call in the auction. Untrusted until the table checks it. */
+export type Action = { type: 'play'; move: unknown } | { type: 'bid'; call: unknown };
 
 export interface HandEnd {
   round: number;
@@ -168,8 +168,47 @@ class ChkobbaTable implements TableGame {
 
 // ───────────────────────────── Belote ─────────────────────────────
 
-function isSuit(v: unknown): v is Suit {
-  return SUITS.includes(v as Suit);
+const PASS: AuctionCall = { type: 'pass' };
+
+/** Why a call (`raw`, parsed as `call`) is refused; the seat is the one to speak. */
+function callError(g: BeloteGame, seat: number, raw: unknown, call: AuctionCall | null): string {
+  const o = g.options(seat);
+  if (g.coinche > 1) return 'After a contre, the takers may only surcontre or pass.';
+  const type = call?.type ?? (raw as { type?: unknown } | null)?.type;
+  switch (type) {
+    case 'contre':
+      return g.contract ? 'Only the other team can say contre.' : 'There is no bid to contre yet.';
+    case 'surcontre':
+      return 'Surcontre answers a contre.';
+    case 'bid':
+      if (o.minBid !== null) return `Bid at least ${o.minBid}, or pass.`;
+      return o.kabbout ? 'Only Kabbout is higher now.' : 'Nothing is higher than Kabbout.';
+    default:
+      return 'That is not a call.';
+  }
+}
+
+/** The contract as the chat tells it. */
+function contractText(info: ContractInfo): string {
+  return `${contractLabel(info.contract)}${info.coinche === 4 ? ' — surcontré ×4' : info.coinche === 2 ? ' — contré ×2' : ''}`;
+}
+
+/** The chat line for a hand that did not simply go as bid (null: nothing special). */
+function handMessage(r: BeloteRoundResult, names: Names): string | null {
+  const takers = teamOf(r.contract.seat);
+  const defence = takers === 0 ? 1 : 0;
+  const taker = names.seat(r.contract.seat);
+  if (r.contract.value === 'kabbout') {
+    return r.outcome === 'made'
+      ? `🎉 Kabbout! ${names.team(takers)} took every trick: +${r.points[takers]}.`
+      : `💥 Kabbout lost — ${names.team(defence)} score ${r.points[defence]}.`;
+  }
+  if (r.outcome === 'failed') {
+    const how = r.early ? `can no longer make ${r.contract.value}, the cards are thrown in` : `missed ${r.contract.value}`;
+    return `💥 Chute! ${taker} ${how}: ${names.team(defence)} score ${r.points[defence]}.`;
+  }
+  if (r.capot === takers) return `🎉 Capot! ${names.team(takers)} took every trick: +${r.points[takers]}.`;
+  return null;
 }
 
 class BeloteTable implements TableGame {
@@ -177,7 +216,7 @@ class BeloteTable implements TableGame {
   readonly game: BeloteGame;
 
   constructor(settings: RoomSettings, rand: () => number) {
-    this.game = new BeloteGame({ targetScore: settings.targetScore, announcements: settings.announcements, rand });
+    this.game = new BeloteGame({ targetScore: settings.targetScore, rand });
   }
 
   get round() {
@@ -196,16 +235,14 @@ class BeloteTable implements TableGame {
     const g = this.game;
     if (action.type === 'bid') {
       if (g.phase !== 'bidding') throw new RoomError('The bidding is over.');
-      const suit = action.suit === null ? null : isSuit(action.suit) ? action.suit : undefined;
-      if (suit === undefined || !g.isLegalBid(seat, suit)) {
-        throw new RoomError(g.bidRound === 1 ? 'Take the turned card’s suit, or pass.' : 'Name another suit, or pass.');
-      }
-      const out = g.bid(seat, suit);
-      const events: InternalEvent[] = [{ kind: 'beloteBid', bid: out.bid, auto }];
+      const call = parseCall(action.call);
+      if (!call || !g.isLegalCall(seat, call)) throw new RoomError(callError(g, seat, action.call, call));
+      const out = g.call(seat, call);
+      const events: InternalEvent[] = [{ kind: 'beloteBid', action: out.action, auto }];
       const messages: string[] = [];
-      if (out.take) {
-        events.push({ kind: 'beloteTake', take: out.take });
-        messages.push(`🃏 ${names.seat(seat)} takes ${suitSymbol(out.take.trump)}${out.bid.round === 2 ? ' in the second round' : ''}.`);
+      if (out.contract) {
+        events.push({ kind: 'beloteContract', info: out.contract });
+        messages.push(`🃏 ${names.seat(out.contract.contract.seat)} plays ${contractText(out.contract)}.`);
       }
       if (out.redeal) {
         events.push({ kind: 'beloteDeal', deal: out.redeal });
@@ -214,7 +251,7 @@ class BeloteTable implements TableGame {
       return { events, messages };
     }
 
-    if (g.phase !== 'playing') throw new RoomError(g.phase === 'bidding' ? 'Take or pass first.' : 'No trick in progress.');
+    if (g.phase !== 'playing') throw new RoomError(g.phase === 'bidding' ? 'The auction is not over yet.' : 'No trick in progress.');
     const move = action.move as { cardId?: unknown } | null;
     if (!move || typeof move.cardId !== 'string') throw new RoomError('Invalid move.');
     if (!g.isLegalCard(seat, move.cardId)) {
@@ -224,41 +261,31 @@ class BeloteTable implements TableGame {
     }
     const out = g.play(seat, move.cardId);
     const events: InternalEvent[] = [{ kind: 'belotePlay', play: out.play, auto }];
-    const messages: string[] = [];
-    if (out.trick) events.push({ kind: 'beloteTrick', trick: out.trick, declarations: out.declarations ?? null });
-    const d = out.declarations;
-    if (d && d.team !== null) {
-      const list = d.counted.map((x) => declarationName(x)).join(', ');
-      messages.push(`📣 ${names.team(d.team)}: ${list} — +${d.points[d.team]} in announcements.`);
-    }
-    if (!out.round) return { events, messages };
+    if (out.trick) events.push({ kind: 'beloteTrick', trick: out.trick });
+    if (!out.round) return { events, messages: [] };
     const r = out.round;
     events.push({ kind: 'beloteEnd', result: r });
-    if (r.capot !== null) messages.push(`🎉 Capot! ${names.team(r.capot)} took every trick.`);
-    if (r.outcome === 'dedans') messages.push(`💥 Dedans! ${names.seat(r.taker)} needed more than half the points.`);
-    if (r.outcome === 'litige') messages.push(`⚖️ Litige: ${r.reserveOut} points wait for the winner of the next hand.`);
-    if (r.reserveIn > 0 && r.reserveTo !== null) messages.push(`${names.team(r.reserveTo)} also win the ${r.reserveIn} points of the litige.`);
-    return { events, messages, handEnd: { round: r.round, points: r.points, totals: r.totals, winner: r.winner } };
+    const line = handMessage(r, names);
+    return { events, messages: line ? [line] : [], handEnd: { round: r.round, points: r.points, totals: r.totals, winner: r.winner } };
   }
 
   autoAction(seat: number, level: BotLevelSetting, rand: () => number, reason: AutoReason): Action {
     const g = this.game;
     const ctx = beloteBotContext(g, seat);
     const lvl = reason === 'bot' ? level : 'normal';
-    // Nobody takes a contract on a player's behalf just because their time ran out.
-    if (g.phase === 'bidding') return { type: 'bid', suit: reason === 'timeout' ? null : chooseBeloteBid(ctx, lvl, rand) };
+    // Nobody bids on a player's behalf just because their time ran out.
+    if (g.phase === 'bidding') return { type: 'bid', call: reason === 'timeout' ? PASS : chooseBeloteCall(ctx, lvl, rand) };
     return { type: 'play', move: { cardId: chooseBeloteCard(ctx, lvl, rand) } };
   }
 
   fallbackAction(seat: number): Action {
     const g = this.game;
-    return g.phase === 'bidding' ? { type: 'bid', suit: null } : { type: 'play', move: { cardId: g.legalCards(seat)[0]!.id } };
+    return g.phase === 'bidding' ? { type: 'bid', call: PASS } : { type: 'play', move: { cardId: g.legalCards(seat)[0]!.id } };
   }
 
   view(seat: number | null): BeloteView {
     const g = this.game;
     const last = g.tricks[g.tricks.length - 1];
-    const firstTrick = g.tricks.length > 0 ? g.tricks[0]!.plays : g.trick;
     return {
       kind: 'belote',
       round: g.round,
@@ -272,10 +299,10 @@ class BeloteTable implements TableGame {
       ready: [],
       nextRoundAt: null,
       stage: g.phase === 'bidding' ? 'bidding' : g.phase === 'playing' ? 'playing' : 'done',
-      bidRound: g.bidRound,
-      upCard: g.upCard,
-      stockCount: g.stock.length,
-      bids: g.bids,
+      auction: g.auction,
+      contract: g.contract,
+      coinche: g.coinche,
+      coincheBy: g.coincheBy,
       trump: g.trump,
       taker: g.taker,
       myHand: seat === null ? null : g.hands[seat]!,
@@ -283,10 +310,6 @@ class BeloteTable implements TableGame {
       lastTrick: last ? { plays: last.plays, winner: last.winner } : null,
       tricksWon: [0, 1, 2, 3].map((s) => g.tricks.filter((t) => t.winner === s).length),
       belote: g.beloteSaid,
-      declared: firstTrick.flatMap((p) => (g.declarations[p.seat] ?? []).map(publicDeclaration)),
-      declResult: g.declResult,
-      reserve: g.reserve,
-      announcements: g.announcements,
       lastRound: g.lastRound,
     };
   }
@@ -316,16 +339,16 @@ export function eventDuration(ev: InternalEvent, numPlayers: number): number {
     case 'beloteEnd':
       return TIMING.roundEnd;
     case 'beloteDeal':
-      // The previous hand is gathered first, then 20 cards are dealt and one turned up.
-      return TIMING.dealBase + TIMING.dealInitialExtra + ev.deal.order.length * TIMING.dealPerCard + TIMING.beloteTurnUp;
+      // The previous hand is gathered first, then the 32 cards go out 4 at a time.
+      return TIMING.dealBase + TIMING.dealInitialExtra + (ev.deal.order.length / 4) * TIMING.beloteDealLot;
     case 'beloteBid':
-      return ev.bid.suit ? TIMING.beloteTake : TIMING.belotePass;
-    case 'beloteTake':
-      return TIMING.beloteTurnUp + ev.take.order.length * TIMING.dealPerCard + TIMING.dealBase / 2;
+      return ev.action.call.type === 'pass' ? TIMING.belotePass : TIMING.beloteBid;
+    case 'beloteContract':
+      return TIMING.beloteContract;
     case 'belotePlay':
       return TIMING.belotePlay;
     case 'beloteTrick':
-      return TIMING.beloteTrick + (ev.declarations?.team != null ? TIMING.beloteDeclarations : 0);
+      return TIMING.beloteTrick;
   }
 }
 
@@ -360,23 +383,19 @@ export function personalizeEvent(ev: InternalEvent, seat: number | null): GameEv
         dealer: d.dealer,
         order: d.order,
         myCards: seat === null ? null : d.hands[seat]!,
-        turned: d.turned,
-        stockAfter: d.stockAfter,
         redeals: d.redeals,
       };
     }
     case 'beloteBid':
-      return { kind: 'beloteBid', bid: ev.bid, auto: ev.auto };
-    case 'beloteTake': {
-      const t = ev.take;
-      return { kind: 'beloteTake', taker: t.taker, trump: t.trump, turned: t.turned, order: t.order, myCards: seat === null ? null : t.hands[seat]! };
-    }
+      return { kind: 'beloteBid', action: ev.action, auto: ev.auto };
+    case 'beloteContract':
+      return { kind: 'beloteContract', contract: ev.info.contract, coinche: ev.info.coinche, coincheBy: ev.info.coincheBy };
     case 'belotePlay': {
       const p = ev.play;
-      return { kind: 'belotePlay', seat: p.seat, card: p.card, belote: p.belote, declared: p.declarations.map(publicDeclaration), auto: ev.auto };
+      return { kind: 'belotePlay', seat: p.seat, card: p.card, belote: p.belote, auto: ev.auto };
     }
     case 'beloteTrick':
-      return { kind: 'beloteTrick', trick: ev.trick, declResult: ev.declarations };
+      return { kind: 'beloteTrick', trick: ev.trick };
     case 'beloteEnd':
       return { kind: 'beloteEnd', result: ev.result };
   }

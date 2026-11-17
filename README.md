@@ -28,17 +28,18 @@ Each chkobba adds one more point. Games go to 11, 21 or 31. If both sides reach 
 
 ## Belote rules implemented
 
-Classic Belote: 32 cards (7 to Ace), four players in two teams, partners opposite. Play goes anticlockwise and the deal passes to the right.
+Tunisian Belote, as Tunisian cafés play it: *belote coinchée* with the Tunisian scale. 32 cards (7 to Ace), four players in two teams, partners opposite. Play goes anticlockwise and the deal passes to the right. The rules follow the ones collected and checked with Tunisian players by the [Kaboot Dineri](https://github.com/othmansouhayl/belote) project, without its house rules (see below).
 
-The dealer gives 3 then 2 cards to each player and turns the next card up. In turn, each player may **take** that card's suit as trumps or pass; if all four pass, a second round lets them name another suit; if all pass again, the cards are dealt anew. The taker picks up the turned card and everyone is dealt up to 8 cards. The player on the dealer's right leads.
+- **Deal:** 8 cards each, in two lots of 4; no card is turned up.
+- **Auction:** from the dealer's right, each player bids a value and a trump suit — 90 to 160 in tens, or **Kabbout** (كبوط: all eight tricks), the highest bid — or passes. Each bid must beat the last; a player may bid again after passing, and may overbid their partner. The other team may say **contre** (×2) to the best bid; the bidders may then answer **surcontre** (×4), which ends the auction. Three passes after a bid end it; four passes with no bid and the next dealer deals again.
+- **Play:** the player on the dealer's right leads. You must follow suit; on a trump lead you must beat the best trump if you can. If you cannot follow suit and your partner is winning the trick, you may play anything — unless you hold nothing but trumps, then you must beat the best trump if you can; otherwise you must trump — overtrumping if you can, with a lower trump if you can't. Trumps rank J 9 A 10 K Q 8 7 (20, 14, 11, 10, 4, 3, 0, 0 points), other suits A 10 K Q J 9 8 7 (11, 10, 4, 3, 2, 0, 0, 0); the last trick is worth 10 more, 162 in all.
+- **Belote / Rebelote:** King and Queen of trumps in one hand, 20 points, called as they are played. They count toward the contract and are never doubled. No other announcements.
+- **Scoring:** each team's card points are rounded to the ten (5 and up rounds up: 96/66 make 100/70), then the belote is added. The bidders must make their bid **and** more than the other team; then each team scores what it made, or 250 for the bidders if they took every trick. Otherwise it is a **chute**: the other team scores 160 (plus the belote, whoever held it). A Kabbout is worth 500, won or lost. After a contre, a contract made scores 160 ×2 (×4 after surcontre; 250 ×2 or ×4 with every trick) for the bidders, a failed one the same for the other team, the belote added undoubled.
+- **Thrown in:** as soon as the bid can no longer be made — even winning every trick left — the cards are thrown in and the chute is scored; a Kabbout is lost with the first trick the other team wins.
 
-You must follow suit; on a trump lead you must beat the best trump if you can. If you cannot follow suit and your partner is winning the trick, you may play anything; otherwise you must trump, overtrumping if you can. Trumps rank J 9 A 10 K Q 8 7 (20, 14, 11, 10, 4, 3, 0, 0 points), other suits A 10 K Q J 9 8 7 (11, 10, 4, 3, 2, 0, 0, 0); the last trick is worth 10 more, 162 in all.
+Games go to 1000, 1500 (the default) or 2000; if both teams reach the target, the higher total wins, and a tie plays another hand. Players can look at the last trick at any time.
 
-- **Belote / Rebelote:** King and Queen of trumps in one hand, 20 points, called as they are played.
-- **Announcements** (a table option, on by default): tierce 20, cinquante 50, cent 100, carré of jacks 200, of nines 150, of aces, tens, kings or queens 100. They are declared with each player's first card; only the team with the best one scores, all of theirs.
-- **Contract:** the takers must make more than the defenders (belote and announcements included), then both teams score what they made. Otherwise they are **dedans** and the defenders score 162 plus all announcements. A tie is a **litige**: the defenders score theirs and the takers' points go to whoever wins the next hand. Taking all eight tricks is a **capot**: 250.
-
-Games go to 501, 701 or 1001; if both teams reach the target, the higher total wins. Players can look at the last trick at any time.
+Left out, as house rules of one town: the "stolen colour" win, minimum bids that depend on the trumps held, bid timers, claiming the remaining tricks, playing a lone legal card automatically, and matches of several games.
 
 ## Run it
 
@@ -97,7 +98,7 @@ src/server/   Express + Socket.IO: rooms, seats, spectators, game flow, timers, 
 src/client/
   game3d/     Three.js scene: terrace, table, card meshes and art, avatars and characters (the crew's beards,
               hair, glasses and outfits in features.ts and outfits.ts), drinks and smoke, animation system,
-              board controller (Chkobba captures, Belote bidding and tricks), trump token, portrait renderer
+              board controller (Chkobba captures, Belote auction and tricks), trump token, portrait renderer
   ui/         DOM overlay: home, lobby, café menu, HUD, name tags, bidding, results, chat, reactions, voice panel
   voice.ts    WebRTC mesh voice chat
   sfx.ts      WebAudio procedural sound effects (drinkAudio.ts plays the drinking recordings)

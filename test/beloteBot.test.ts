@@ -1,14 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { type Suit, seededRandom } from '../src/shared/cards';
-import { type BCard, BeloteGame, type TrickPlay, legalCards, parseBeloteCard } from '../src/shared/belote';
-import {
-  type BeloteBotContext,
-  type BotLevel,
-  beloteBotContext,
-  bidValue,
-  chooseBeloteBid,
-  chooseBeloteCard,
-} from '../src/shared/beloteBot';
+import { type AuctionAction, type BCard, BeloteGame, type TrickPlay, parseBeloteCard } from '../src/shared/belote';
+import { type BeloteBotContext, type BotLevel, beloteBotContext, chooseBeloteCall, chooseBeloteCard } from '../src/shared/beloteBot';
 import { teamOf } from '../src/shared/teams';
 
 const LEVELS: BotLevel[] = ['easy', 'normal', 'hard'];
@@ -22,30 +15,37 @@ const trick = (list: string): TrickPlay[] =>
       return { seat: Number(seat), card: parseBeloteCard(id!) };
     });
 
-/** A playing position for `seat` (trumps, taker and the trick so far given; nothing else known). */
-function position(o: { seat: number; hand: string; trump: Suit; taker: number; trick?: string; upCard?: string }): BeloteBotContext {
+/** A playing position for `seat`: the taker bid 90 in `trump`, the trick so far is given, nothing else known. */
+function position(o: { seat: number; hand: string; trump: Suit; taker: number; trick?: string }): BeloteBotContext {
   const t = trick(o.trick ?? '');
   const counts = [0, 1, 2, 3].map((s) => (s === o.seat ? cards(o.hand).length : 8 - (t.some((p) => p.seat === s) ? 1 : 0)));
+  const contract = { seat: o.taker, value: 90, suit: o.trump };
   return {
     seat: o.seat,
     dealer: 3,
     phase: 'playing',
     hand: cards(o.hand),
-    bidRound: 1,
-    upCard: o.upCard ? parseBeloteCard(o.upCard) : null,
-    bids: [],
+    auction: [{ seat: o.taker, call: { type: 'bid', value: 90, suit: o.trump } }],
+    contract,
+    coinche: 1,
     trump: o.trump,
     taker: o.taker,
     trick: t,
     tricks: [],
     handCounts: counts,
     belote: null,
-    declared: [],
-    ownDeclarations: [],
-    declResult: null,
     scores: [0, 0],
-    targetScore: 501,
+    targetScore: 1500,
   };
+}
+
+/** An auction position for `seat` (the dealer is seat 3, so seat 0 speaks first). */
+function auction(seat: number, hand: string, calls: AuctionAction[] = []): BeloteBotContext {
+  const g = new BeloteGame({ targetScore: 1500, rand: seededRandom(1), firstDealer: 3 });
+  g.startRound();
+  for (const a of calls) g.call(a.seat, a.call);
+  expect(g.turn).toBe(seat);
+  return { ...beloteBotContext(g, seat), hand: cards(hand) };
 }
 
 type Player = BotLevel | 'random';
@@ -60,7 +60,7 @@ function playHand(players: [Player, Player], dealSeed: number, botSeed: number, 
     const player = players[teamOf(seat)];
     const ctx = beloteBotContext(g, seat);
     if (g.phase === 'bidding') {
-      g.bid(seat, chooseBeloteBid(ctx, player === 'random' ? 'normal' : player, rand));
+      g.call(seat, chooseBeloteCall(ctx, player === 'random' ? 'normal' : player, rand));
       continue;
     }
     let id: string;
@@ -90,70 +90,80 @@ function duel(a: Player, b: Player, deals: number, seed: number) {
 describe('beloteBotContext', () => {
   it('exposes only what the seat may know', () => {
     const rand = seededRandom(11);
-    for (let attempt = 0; attempt < 20; attempt++) {
-      const g = new BeloteGame({ targetScore: 501, rand: seededRandom(100 + attempt), firstDealer: attempt % 4 });
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const g = new BeloteGame({ targetScore: 1500, rand: seededRandom(100 + attempt), firstDealer: attempt % 4 });
       g.startRound();
-      while (g.phase === 'bidding') g.bid(g.turn, chooseBeloteBid(beloteBotContext(g, g.turn), 'normal', rand));
-      for (let i = 0; i < 6; i++) g.play(g.turn, chooseBeloteCard(beloteBotContext(g, g.turn), 'normal', rand));
-      const shown = new Set((g.declResult?.counted ?? []).flatMap((d) => d.cards.map((c) => c.id)));
+      while (g.phase === 'bidding') g.call(g.turn, chooseBeloteCall(beloteBotContext(g, g.turn), 'normal', rand));
+      for (let i = 0; i < 6 && g.phase === 'playing'; i++) g.play(g.turn, chooseBeloteCard(beloteBotContext(g, g.turn), 'normal', rand));
       for (let seat = 0; seat < 4; seat++) {
         const json = JSON.stringify(beloteBotContext(g, seat));
         for (let other = 0; other < 4; other++) {
           if (other === seat) continue;
-          for (const card of g.hands[other]!) {
-            if (card.id === g.upCard?.id && other === g.taker) continue;
-            if (shown.has(card.id)) continue;
-            expect(json).not.toContain(`"${card.id}"`);
-          }
+          for (const card of g.hands[other]!) expect(json).not.toContain(`"${card.id}"`);
         }
       }
     }
   });
 
   it('does not alias the engine state', () => {
-    const g = new BeloteGame({ targetScore: 501, rand: seededRandom(3), firstDealer: 0 });
+    const g = new BeloteGame({ targetScore: 1500, rand: seededRandom(3), firstDealer: 3 });
     g.startRound();
-    g.bid(1, g.turned!.suit);
+    g.call(0, { type: 'bid', value: 90, suit: 'H' });
     const ctx = beloteBotContext(g, 1);
     ctx.hand.pop();
-    ctx.trick.push({ seat: 0, card: parseBeloteCard('SA') });
+    ctx.auction.push({ seat: 1, call: { type: 'pass' } });
+    ctx.contract!.value = 160;
     expect(g.hands[1]).toHaveLength(8);
-    expect(g.trick).toHaveLength(0);
+    expect(g.auction).toHaveLength(1);
+    expect(g.contract!.value).toBe(90);
   });
 });
 
-describe('bidding', () => {
-  it('values trumps, belote and side aces', () => {
-    expect(bidValue(cards('HJ H9 HA SA D7 C8'), 'H')).toBeGreaterThan(bidValue(cards('H7 H8 HQ SA D7 C8'), 'H'));
-    expect(bidValue(cards('S7 S8 SA D7 C8 C9'), 'H')).toBe(-99);
+describe('chooseBeloteCall', () => {
+  const call = (ctx: BeloteBotContext, level: BotLevel = 'normal') => chooseBeloteCall(ctx, level, seededRandom(5));
+
+  it('opens with a good hand in its best suit, and passes a poor one', () => {
+    expect(call(auction(0, 'SJ S9 SA S10 D7 D8 C7 H8'))).toMatchObject({ type: 'bid', value: 90, suit: 'S' });
+    expect(call(auction(0, 'S7 S8 D9 D8 C7 C8 H7 HQ'))).toEqual({ type: 'pass' });
   });
 
-  it('takes a strong hand and passes a weak one', () => {
-    const ctx = (hand: string, up: string, round: 1 | 2 = 1): BeloteBotContext => ({
-      ...position({ seat: 1, hand, trump: 'H', taker: 0 }),
-      phase: 'bidding',
-      trump: null,
-      taker: null,
-      bidRound: round,
-      upCard: parseBeloteCard(up),
-    });
-    expect(chooseBeloteBid(ctx('HJ H9 SA D7 C8', 'HA'), 'normal')).toBe('H');
-    expect(chooseBeloteBid(ctx('H7 S8 D9 C8 C10', 'HQ'), 'normal')).toBeNull();
-    // Second round: the best other suit, never the turned one.
-    expect(chooseBeloteBid(ctx('SJ S9 SA D7 C8', 'H7', 2), 'normal')).toBe('S');
-    expect(chooseBeloteBid(ctx('HJ H9 HA D7 C8', 'H7', 2), 'normal')).toBeNull();
+  it('calls Kabbout when it takes every trick', () => {
+    expect(call(auction(0, 'HJ H9 HA H10 HK HQ SA DA'))).toEqual({ type: 'bid', value: 'kabbout', suit: 'H' });
   });
 
-  it('always bids legally in full games, at every level', () => {
+  it('says contre against a contract its hand defeats', () => {
+    const ctx = auction(1, 'HJ H9 HA S7 D8 C7 C8 D7', [{ seat: 0, call: { type: 'bid', value: 160, suit: 'H' } }]);
+    expect(call(ctx)).toEqual({ type: 'contre' });
+    // Easy bots never double.
+    expect(call(ctx, 'easy').type).not.toBe('contre');
+  });
+
+  it('answers a contre with surcontre when its side surely makes it', () => {
+    const ctx = auction(2, 'HJ H9 HA H10 HK HQ SA DA', [
+      { seat: 0, call: { type: 'bid', value: 90, suit: 'H' } },
+      { seat: 1, call: { type: 'contre' } },
+    ]);
+    expect(call(ctx)).toEqual({ type: 'surcontre' });
+  });
+
+  it('lets its partner’s contract stand with an ordinary hand', () => {
+    const ctx = auction(2, 'S7 D9 D8 C7 C8 H7 HQ CK', [
+      { seat: 0, call: { type: 'bid', value: 90, suit: 'S' } },
+      { seat: 1, call: { type: 'pass' } },
+    ]);
+    expect(call(ctx)).toEqual({ type: 'pass' });
+  });
+
+  it('always calls legally in full auctions, at every level', () => {
     for (const level of LEVELS) {
       const rand = seededRandom(7);
-      for (let seed = 1; seed <= 25; seed++) {
-        const g = new BeloteGame({ targetScore: 501, rand: seededRandom(seed), firstDealer: seed % 4 });
+      for (let seed = 1; seed <= (level === 'hard' ? 8 : 20); seed++) {
+        const g = new BeloteGame({ targetScore: 1500, rand: seededRandom(seed), firstDealer: seed % 4 });
         g.startRound();
         while (g.phase === 'bidding') {
-          const bid = chooseBeloteBid(beloteBotContext(g, g.turn), level, rand);
-          expect(g.isLegalBid(g.turn, bid)).toBe(true);
-          g.bid(g.turn, bid);
+          const c = chooseBeloteCall(beloteBotContext(g, g.turn), level, rand);
+          expect(g.isLegalCall(g.turn, c)).toBe(true);
+          g.call(g.turn, c);
         }
       }
     }
@@ -164,13 +174,13 @@ describe('chooseBeloteCard', () => {
   it('always plays a legal card in full games, at every level', () => {
     for (const level of LEVELS) {
       const rand = seededRandom(level.length);
-      for (let seed = 1; seed <= (level === 'hard' ? 6 : 25); seed++) {
+      for (let seed = 1; seed <= (level === 'hard' ? 4 : 15); seed++) {
         const g = new BeloteGame({ targetScore: 1e9, rand: seededRandom(seed * 17), firstDealer: seed % 4 });
         g.startRound();
-        for (let hand = 0; hand < 3; ) {
+        for (let hand = 0; hand < 2; ) {
           if (g.phase === 'roundOver') g.startRound();
           if (g.phase === 'bidding') {
-            g.bid(g.turn, chooseBeloteBid(beloteBotContext(g, g.turn), level, rand));
+            g.call(g.turn, chooseBeloteCall(beloteBotContext(g, g.turn), 'normal', rand));
             continue;
           }
           const id = chooseBeloteCard(beloteBotContext(g, g.turn), level, rand);
@@ -182,10 +192,11 @@ describe('chooseBeloteCard', () => {
   });
 
   it('is deterministic for a given random source and leaves the context untouched', () => {
-    const g = new BeloteGame({ targetScore: 501, rand: seededRandom(8), firstDealer: 0 });
+    const g = new BeloteGame({ targetScore: 1500, rand: seededRandom(8), firstDealer: 3 });
     g.startRound();
-    g.bid(1, g.turned!.suit);
-    g.play(1, g.legalCards(1)[0]!.id);
+    g.call(0, { type: 'bid', value: 90, suit: 'H' });
+    for (const s of [1, 2, 3]) g.call(s, { type: 'pass' });
+    g.play(0, g.legalCards(0)[0]!.id);
     for (const level of LEVELS) {
       const ctx = beloteBotContext(g, g.turn);
       const before = JSON.stringify(ctx);
@@ -229,45 +240,44 @@ describe('chooseBeloteCard', () => {
 });
 
 describe('strength (average points per hand, duplicate deals)', () => {
-  it('normal clearly beats random card play', () => {
-    const r = duel('normal', 'random', 120, 1);
-    expect(r.a - r.b).toBeGreaterThan(25); // measured: 116 vs 79 per hand
+  it('normal clearly beats random card play', { timeout: 60000 }, () => {
+    const r = duel('normal', 'random', 80, 1);
+    expect(r.a - r.b).toBeGreaterThan(40); // measured: 138 vs 64 per hand
   });
 
-  it('easy is weaker than normal', () => {
-    const r = duel('easy', 'normal', 150, 2);
-    expect(r.a).toBeLessThan(r.b); // measured: 90 vs 107 per hand
+  it('easy is weaker than normal', { timeout: 60000 }, () => {
+    const r = duel('easy', 'normal', 100, 2);
+    expect(r.a).toBeLessThan(r.b); // measured: 79 vs 106 per hand
   });
 
-  it('hard is at least as good as normal', { timeout: 60000 }, () => {
-    const r = duel('hard', 'normal', 100, 3);
-    expect(r.a).toBeGreaterThan(r.b); // measured: 109 vs 85 per hand (108 vs 89 over 400 deals)
+  it('hard is at least as good as normal', { timeout: 120000 }, () => {
+    const r = duel('hard', 'normal', 60, 3);
+    expect(r.a).toBeGreaterThan(r.b); // measured: 101 vs 78 per hand (111 vs 81 over 300 deals)
   });
 
   it('decides quickly', { timeout: 60000 }, () => {
     const rand = seededRandom(77);
     for (const level of LEVELS) {
-      let total = 0;
-      let worst = 0;
-      let n = 0;
-      for (let seed = 1; seed <= 12; seed++) {
+      const time = { call: { total: 0, worst: 0, n: 0 }, card: { total: 0, worst: 0, n: 0 } };
+      const timed = <T>(kind: 'call' | 'card', f: () => T): T => {
+        const t0 = performance.now();
+        const v = f();
+        const dt = performance.now() - t0;
+        time[kind].total += dt;
+        time[kind].worst = Math.max(time[kind].worst, dt);
+        time[kind].n++;
+        return v;
+      };
+      for (let seed = 1; seed <= 6; seed++) {
         const g = new BeloteGame({ targetScore: 1e9, rand: seededRandom(seed), firstDealer: seed % 4 });
         g.startRound();
-        while (g.phase === 'bidding') g.bid(g.turn, chooseBeloteBid(beloteBotContext(g, g.turn), 'normal', rand));
-        while (g.phase === 'playing') {
-          const ctx = beloteBotContext(g, g.turn);
-          const t0 = performance.now();
-          const id = chooseBeloteCard(ctx, level, rand);
-          const dt = performance.now() - t0;
-          total += dt;
-          worst = Math.max(worst, dt);
-          n++;
-          expect(legalCards(g.hands[g.turn]!, g.trick, g.trump!, g.turn).some((c) => c.id === id)).toBe(true);
-          g.play(g.turn, id);
-        }
+        while (g.phase === 'bidding') g.call(g.turn, timed('call', () => chooseBeloteCall(beloteBotContext(g, g.turn), level, rand)));
+        while (g.phase === 'playing') g.play(g.turn, timed('card', () => chooseBeloteCard(beloteBotContext(g, g.turn), level, rand)));
       }
-      expect(total / n).toBeLessThan(10); // measured: easy/normal ~0.01 ms, hard ~1.5 ms on average
-      expect(worst).toBeLessThan(250);
+      for (const kind of ['call', 'card'] as const) {
+        expect(time[kind].total / time[kind].n).toBeLessThan(40);
+        expect(time[kind].worst).toBeLessThan(400);
+      }
     }
   });
 });

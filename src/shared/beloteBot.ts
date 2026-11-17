@@ -1,39 +1,49 @@
 /**
- * Computer players for Belote.
+ * Computer players for Tunisian Belote.
  *
- * A bot only reasons with what its seat may know (see `beloteBotContext`): its own hand, the turned card and
- * the bids, every card played so far, the hand sizes, what was announced, and what follows from the rules — a
- * player who did not follow suit has none left; one who did not trump an opponent's trick has no trumps; one
- * who played a lower trump when obliged to go higher has no higher trump.
+ * A bot only reasons with what its seat may know (see `beloteBotContext`): its own hand, the auction, every
+ * card played so far, the hand sizes, and what follows from the rules — a player who did not follow suit has
+ * none left; one who did not trump an opponent's trick has no trumps; one who played a lower trump when obliged
+ * to go higher has no higher trump. The auction tells about hands too (see `readAuction`).
  *
- * Bidding (every level): the hand, with the turned card, is valued for each suit it may take — the jack and
- * nine of trumps, trump length, belote, side aces and guarded tens, voids to trump with — and the best suit is
- * taken when its value clears a threshold measured with self-play.
+ * Auction: the bot plays the hand out in simulation, over deals of the cards it cannot see — once for each suit
+ * it could take, and once for the contract it would let stand by passing — and scores each outcome with the
+ * Tunisian scale. The deals are drawn to fit the auction: a bid shows a hand worth about 100 in its suit, a
+ * pass when free to bid a weaker one. It bids the lowest value that wins the auction, in the suit worth most,
+ * when it makes it in most deals and that beats passing on average (a made contract scores the points actually
+ * made, so bidding higher than needed only adds risk); it calls Kabbout when it takes every trick in most
+ * deals, says "contre" when the opponents' contract nearly always fails, and "surcontre" when its own nearly
+ * always succeeds.
  *
  * Card play works on a compact model (cards as bits of a 32-bit mask):
  *  - normal: card-play heuristics. Takers draw trumps with the master trump; everybody cashes master cards
  *    the opponents cannot trump; a player "charges" points onto a trick their partner surely wins; an
  *    opponent's trick is won as cheaply as possible, with a card no later opponent can beat; otherwise the
  *    cheapest card goes (never a ten whose ace is still out, never a trump without need).
- *  - easy: the same, but now and then a random legal card, and looser bidding.
+ *  - easy: the same, but now and then a random legal card; a noisier auction that never doubles.
  *  - hard: Monte Carlo. Hands for the other players are dealt at random, consistent with everything known;
  *    each legal card is played out to the end of the hand with the normal heuristics for all four players,
- *    and the card with the best average hand score (contract rules applied) is played.
+ *    and the card with the best average hand score (Tunisian scale, contract and doubling applied) is played.
  *
- * Cost per decision: easy/normal ~5 µs; hard ~5–15 ms early in a hand, less as it goes (a work budget caps it).
+ * Cost per decision: a call ~1–6 ms on average (up to ~25 ms); a card ~10 µs at easy and normal, ~2 ms on
+ * average at hard (up to ~30 ms).
  */
 import { SUITS, type Suit } from './cards';
 import {
   BELOTE_RANKS,
+  type AuctionAction,
+  type AuctionCall,
+  type AuctionOptions,
   type BCard,
   type BRank,
   type BeloteGame,
-  type BidInfo,
-  type DeclarationsResult,
-  type PublicDeclaration,
+  type Coinche,
+  type Contract,
+  type ContractValue,
   type TrickPlay,
+  auctionOptions,
   makeBeloteCard,
-  publicDeclaration,
+  roundTen,
 } from './belote';
 
 export type BotLevel = 'easy' | 'normal' | 'hard';
@@ -43,10 +53,11 @@ export interface BeloteBotContext {
   dealer: number;
   phase: 'bidding' | 'playing';
   hand: BCard[];
-  bidRound: 1 | 2;
-  /** The card turned up for the bidding; once taken, everybody knows the taker holds it until played. */
-  upCard: BCard | null;
-  bids: BidInfo[];
+  /** The calls so far (the whole auction, once it is over). */
+  auction: AuctionAction[];
+  /** The best bid so far, or the contract. */
+  contract: Contract | null;
+  coinche: Coinche;
   trump: Suit | null;
   taker: number | null;
   /** The trick in progress, in play order. */
@@ -56,103 +67,29 @@ export interface BeloteBotContext {
   handCounts: number[];
   /** The seat that said "Belote", and how many of the two cards it has played. */
   belote: { seat: number; stage: number } | null;
-  /** Announcements made so far, as the table heard them (their cards are not shown). */
-  declared: PublicDeclaration[];
-  /** The bot's own announcements this hand (made with its first card). */
-  ownDeclarations: PublicDeclaration[];
-  /** Which announcements count, once the first trick is over (their cards are shown). */
-  declResult: DeclarationsResult | null;
   scores: [number, number];
   targetScore: number;
 }
 
 /** The bot's view of the game for `seat`: only what that seat is entitled to know. */
 export function beloteBotContext(game: BeloteGame, seat: number): BeloteBotContext {
-  // Players declare with their first card: those who played in the first trick have declared.
-  const firstTrick = game.tricks.length > 0 ? game.tricks[0]!.plays : game.trick;
-  const declared = firstTrick.flatMap((p) => (game.declarations[p.seat] ?? []).map(publicDeclaration));
   return {
     seat,
     dealer: game.dealer,
     phase: game.phase === 'bidding' ? 'bidding' : 'playing',
     hand: [...(game.hands[seat] ?? [])],
-    bidRound: game.bidRound,
-    upCard: game.upCard,
-    bids: [...game.bids],
+    auction: game.auction.map((a) => ({ seat: a.seat, call: { ...a.call } })),
+    contract: game.contract ? { ...game.contract } : null,
+    coinche: game.coinche,
     trump: game.trump,
     taker: game.taker,
     trick: [...game.trick],
     tricks: game.tricks.map((t) => ({ plays: [...t.plays], winner: t.winner })),
     handCounts: game.hands.map((h) => h.length),
     belote: game.beloteSaid,
-    declared,
-    ownDeclarations: (game.declarations[seat] ?? []).map(publicDeclaration),
-    declResult: game.declResult,
     scores: [game.scores[0], game.scores[1]],
     targetScore: game.targetScore,
   };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
-// Bidding
-// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
-
-/** What each trump is worth to the taker (bidding units, roughly tricks × 3). */
-const TRUMP_BID: Readonly<Record<BRank, number>> = { J: 7, '9': 4.5, A: 2.5, '10': 2, K: 1, Q: 1, '8': 0.8, '7': 0.8 };
-
-/**
- * Take when the hand is worth this much. Measured with self-play (normal bots, 8000 hands per point): against
- * a table bidding at 13, bidding at 10 gains 8 points a hand; against a table at 10, anything from 9 to 12 is
- * within ±2 points, so 10 is about an equilibrium — and it leaves about one redeal every 8 hands.
- */
-export const BID_THRESHOLD = 10;
-const EASY_BID_SHIFT = -1.5;
-const EASY_BID_NOISE = 3;
-const EASY_RANDOM_CARD = 0.25;
-
-/** Value of `cards` (the hand and the turned card) with `trump` as trumps. */
-export function bidValue(cards: readonly BCard[], trump: Suit): number {
-  const trumps = cards.filter((c) => c.suit === trump);
-  if (trumps.length === 0) return -99;
-  const has = (rank: BRank) => trumps.some((c) => c.rank === rank);
-  let v = 0;
-  for (const c of trumps) v += TRUMP_BID[c.rank];
-  if (has('J') && has('9')) v += 1.5;
-  if (has('K') && has('Q')) v += 2;
-  if (trumps.length === 1) v -= 3.5;
-  else if (trumps.length === 2) v -= 1;
-  else if (trumps.length >= 4) v += (trumps.length - 3) * 1.5;
-  for (const s of SUITS) {
-    if (s === trump) continue;
-    const side = cards.filter((c) => c.suit === s);
-    const ace = side.some((c) => c.rank === 'A');
-    const ten = side.some((c) => c.rank === '10');
-    if (ace) v += 2.5;
-    if (ace && ten) v += 2;
-    else if (ten && side.length >= 2) v += 0.5;
-    if (side.length === 0 && trumps.length >= 2) v += 1;
-  }
-  return v;
-}
-
-/** The bot's bid: the trump suit to take, or null to pass. Always a legal bid. */
-export function chooseBeloteBid(ctx: BeloteBotContext, level: BotLevel = 'normal', rand: () => number = Math.random): Suit | null {
-  const up = ctx.upCard;
-  if (!up) return null;
-  const cards = [...ctx.hand, up];
-  const threshold = BID_THRESHOLD + (level === 'easy' ? EASY_BID_SHIFT + (rand() - 0.5) * 2 * EASY_BID_NOISE : 0);
-  if (ctx.bidRound === 1) return bidValue(cards, up.suit) >= threshold ? up.suit : null;
-  let best: Suit | null = null;
-  let bestValue = threshold;
-  for (const s of SUITS) {
-    if (s === up.suit) continue;
-    const v = bidValue(cards, s);
-    if (v >= bestValue) {
-      best = s;
-      bestValue = v;
-    }
-  }
-  return best;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -281,8 +218,10 @@ class Sim {
     if (follow !== 0) return led === T ? above(follow, T, this.topTrump()) || follow : follow;
     const trumps = hand & SUIT_MASK[T]!;
     if (trumps === 0) return hand;
-    if ((this.tSeat[this.winnerIndex()]! & 1) === (seat & 1)) return hand;
-    return above(trumps, T, this.topTrump()) || trumps;
+    const over = above(trumps, T, this.topTrump());
+    // Partner winning: any card, unless only trumps are left (then beat the best one if possible).
+    if ((this.tSeat[this.winnerIndex()]! & 1) === (seat & 1)) return trumps === hand ? over || hand : hand;
+    return over || trumps;
   }
 
   apply(seat: number, code: number) {
@@ -530,10 +469,344 @@ function weakest(mask: number, base: number): number {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+// Scoring a simulated hand with the Tunisian scale
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+const JACK = 4;
+const NINE = 2;
+
+interface HandResult {
+  /** What each team made: trick points rounded to the ten, plus its belote. */
+  made: [number, number];
+  /** The team that took all eight tricks (−1: none). */
+  capot: number;
+}
+
+function handResult(sim: Sim, beloteTeam: number): HandResult {
+  return {
+    made: [roundTen(sim.pts[0]!) + (beloteTeam === 0 ? 20 : 0), roundTen(sim.pts[1]!) + (beloteTeam === 1 ? 20 : 0)],
+    capot: sim.won[0] === 8 ? 0 : sim.won[1] === 8 ? 1 : -1,
+  };
+}
+
+function succeeds(r: HandResult, takers: number, value: ContractValue): boolean {
+  if (value === 'kabbout') return r.capot === takers;
+  return r.made[takers]! >= value && r.made[takers]! > r.made[takers ^ 1]!;
+}
+
+/** Hand score of team `us` minus the other's, for a contract (see scoreBeloteHand: same scale). */
+function contractScore(r: HandResult, takers: number, value: ContractValue, coinche: number, beloteTeam: number, us: number): number {
+  const defence = takers ^ 1;
+  const kabbout = value === 'kabbout';
+  const anyBelote = beloteTeam >= 0 ? 20 : 0;
+  const pts = [0, 0];
+  if (!succeeds(r, takers, value)) pts[defence] = (kabbout ? 500 : 160) * coinche + anyBelote;
+  else if (coinche > 1) pts[takers] = (kabbout ? 500 : r.capot === takers ? 250 : 160) * coinche + anyBelote;
+  else if (kabbout || r.capot === takers) {
+    pts[takers] = (kabbout ? 500 : 250) + (beloteTeam === takers ? 20 : 0);
+    pts[defence] = beloteTeam === defence ? 20 : 0;
+  } else {
+    pts[takers] = r.made[takers]!;
+    pts[defence] = r.made[defence]!;
+  }
+  return pts[us]! - pts[us ^ 1]!;
+}
+
+/** Team of the seat holding the King and Queen of trump `T` in a deal (−1: nobody). */
+function beloteOf(hands: readonly number[], T: number): number {
+  const pair = (1 << (T * 8 + KING)) | (1 << (T * 8 + QUEEN));
+  for (let s = 0; s < 4; s++) if ((hands[s]! & pair) === pair) return s & 1;
+  return -1;
+}
+
+/** Plays a whole hand out with the heuristics for everybody. */
+function playOut(hands: readonly number[], T: number, taker: number, leader: number): Sim {
+  const sim = new Sim(T, taker);
+  sim.hands = hands.slice();
+  sim.turn = leader;
+  while (sim.done < 8) sim.apply(sim.turn, heuristic(sim, sim.turn));
+  return sim;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+// Reading the auction
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+/** Trump weights of `handStrength`, by rank index (7 8 9 10 J Q K A). */
+const STRENGTH_TRUMP = [4.5, 4.5, 18, 8, 27, 3, 3.5, 11];
+
+/**
+ * What a team can expect to make (trick points rounded, plus belote) when it takes with trump `T` holding this
+ * 8-card hand: a least-squares fit over 160 000 simulated deals played out by the heuristics. The partner's
+ * cards make the real figure spread widely (±31), but on average the estimate is right — enough to read what
+ * a bid, or a pass, says about a hand.
+ */
+function handStrength(h: number, T: number): number {
+  let v = 50;
+  let trumps = 0;
+  for (let r = 0; r < 8; r++) {
+    if ((h >>> (T * 8 + r)) & 1) {
+      v += STRENGTH_TRUMP[r]!;
+      trumps++;
+    }
+  }
+  if ((h >>> (T * 8 + KING)) & 1 && (h >>> (T * 8 + QUEEN)) & 1) v += 22;
+  v += 6 * Math.max(0, trumps - 2);
+  for (let s = 0; s < 4; s++) {
+    if (s === T) continue;
+    const m = (h >>> (s * 8)) & 0xff;
+    if (m === 0) v += 6;
+    if ((m >> ACE) & 1) v += 9;
+    if ((m >> TEN) & 1) v += 2.5;
+  }
+  return v;
+}
+
+/**
+ * What the auction says about the other players' hands, as a likelihood: a bidder's hand is probably worth about
+ * `AUCTION_READING.bid` in the suit of its last bid (`kabbout` for a Kabbout); a player who passed when free to
+ * bid `minBid` probably holds less than `pass + passStep × (minBid − 90)` in every suit. Simulated deals are
+ * weighted by how well they agree (a logistic curve `scale` wide). Measured on the bots' own bidding: bids,
+ * opening or competing, come from hands worth 100–115; passes from hands worth less than 105–125.
+ */
+export const AUCTION_READING = { bid: 100, kabbout: 150, pass: 104, passStep: 0.3, scale: 8 };
+
+interface AuctionReading {
+  /** Each bidder's last bid: the strength its hand probably has in that suit. */
+  bids: { seat: number; suit: number; center: number }[];
+  /** Each seat that declined to bid: the strength its hand probably stays under, in any suit (Infinity: none). */
+  passCenter: number[];
+}
+
+function readAuction(ctx: BeloteBotContext): AuctionReading {
+  const R = AUCTION_READING;
+  const last = new Map<number, { suit: number; center: number }>();
+  const passCenter = [Infinity, Infinity, Infinity, Infinity];
+  let holder = -1;
+  let value = 0;
+  for (const a of ctx.auction) {
+    if (a.call.type === 'contre') break; // what follows only accepts or raises the doubling
+    if (a.call.type === 'bid') {
+      holder = a.seat;
+      value = a.call.value === 'kabbout' ? 170 : a.call.value;
+      if (a.seat !== ctx.seat) last.set(a.seat, { suit: SUIT_INDEX[a.call.suit], center: a.call.value === 'kabbout' ? R.kabbout : R.bid });
+    } else if (a.call.type === 'pass' && a.seat !== ctx.seat && value < 170 && (holder < 0 || (holder & 1) !== (a.seat & 1))) {
+      // Passing when free to bid says the hand is weak; passing over the partner's bid, or a Kabbout, says little.
+      const minBid = holder < 0 ? 90 : value + 10;
+      passCenter[a.seat] = Math.min(passCenter[a.seat]!, R.pass + R.passStep * (minBid - 90));
+    }
+  }
+  return { bids: [...last].map(([seat, b]) => ({ seat, ...b })), passCenter };
+}
+
+/** How likely the auction was with these (original, 8-card) hands, up to a constant. */
+function readingWeight(hands: readonly number[], reading: AuctionReading): number {
+  const k = AUCTION_READING.scale;
+  let w = 1;
+  for (const b of reading.bids) w /= 1 + Math.exp((b.center - handStrength(hands[b.seat]!, b.suit)) / k);
+  for (let s = 0; s < 4; s++) {
+    const c = reading.passCenter[s]!;
+    if (c === Infinity) continue;
+    let best = 0;
+    for (let T = 0; T < 4; T++) best = Math.max(best, handStrength(hands[s]!, T));
+    w /= 1 + Math.exp((best - c) / k);
+  }
+  return w;
+}
+
+/** Picks `n` of the candidates, each with a chance proportional to its weight (systematic resampling). */
+function resample<T>(items: readonly T[], weights: readonly number[], n: number, rand: () => number): T[] {
+  const total = weights.reduce((a, b) => a + b, 0);
+  if (!(total > 0)) return items.slice(0, n);
+  const out: T[] = [];
+  const step = total / n;
+  let u = rand() * step;
+  let acc = 0;
+  for (let i = 0; i < items.length && out.length < n; i++) {
+    acc += weights[i]!;
+    while (u < acc && out.length < n) {
+      out.push(items[i]!);
+      u += step;
+    }
+  }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+// Auction
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+/** Deals simulated per auction decision. */
+const AUCTION_WORLDS: Readonly<Record<BotLevel, number>> = { easy: 8, normal: 24, hard: 48 };
+
+/**
+ * Auction judgement, measured with self-play (duplicate deals, see test/beloteBot.test.ts). Exported so that
+ * experiments can try other values; the game never changes them.
+ */
+export const AUCTION_TUNING = {
+  /** A bid must beat passing by this much on average (hand points). */
+  margin: 10,
+  /** Overbidding the partner's contract must beat letting it stand by this much. */
+  partnerMargin: 30,
+  /** Only contracts made in at least this share of the deals are bid: a bid is a promise, not a sacrifice. */
+  minSuccess: 0.6,
+  /** Kabbout only when every trick is taken in at least this share of the deals. */
+  kabbout: 0.7,
+  /** Contre only when the opponents' contract is made in at most this share of the deals. */
+  contre: 0.1,
+  /** Surcontre when our contract is made in at least this share. */
+  surcontre: 0.8,
+  /** Easy bots misjudge each option by up to this much. */
+  easyNoise: 35,
+};
+const EASY_RANDOM_CARD = 0.25;
+
+/** A deal of the cards the bot cannot see, before any card is played; bidders usually get their suit's jack or nine. */
+function auctionDeal(me: number, mine: number, hints: readonly { seat: number; suit: number }[], rand: () => number): number[] {
+  const hands = [0, 0, 0, 0];
+  hands[me] = mine;
+  const room = [8, 8, 8, 8];
+  room[me] = 0;
+  let pool = ~mine;
+  for (const h of hints) {
+    if (rand() >= 0.8) continue;
+    for (const r of [JACK, NINE]) {
+      const bit = 1 << (h.suit * 8 + r);
+      if (pool & bit && room[h.seat]! > 0) {
+        hands[h.seat]! |= bit;
+        pool &= ~bit;
+        room[h.seat]!--;
+        break;
+      }
+    }
+  }
+  const rest: number[] = [];
+  for (let m = pool; m !== 0; m &= m - 1) rest.push(lowCode(m));
+  for (let i = rest.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1)) % (i + 1);
+    const t = rest[i]!;
+    rest[i] = rest[j]!;
+    rest[j] = t;
+  }
+  let k = 0;
+  for (let s = 0; s < 4; s++) while (room[s]! > 0) {
+    hands[s]! |= 1 << rest[k++]!;
+    room[s]!--;
+  }
+  return hands;
+}
+
+/** `n` deals of the hidden cards, drawn in proportion to how well they agree with the auction. */
+function auctionWorlds(me: number, mine: number, reading: AuctionReading, n: number, rand: () => number): number[][] {
+  const deals: number[][] = [];
+  const weights: number[] = [];
+  for (let i = 0; i < n * 4; i++) {
+    const hands = auctionDeal(me, mine, reading.bids, rand);
+    deals.push(hands);
+    weights.push(readingWeight(hands, reading));
+  }
+  return resample(deals, weights, n, rand);
+}
+
+/** The bot's call: always one allowed by `auctionOptions` (passing when in doubt). */
+export function chooseBeloteCall(ctx: BeloteBotContext, level: BotLevel = 'normal', rand: () => number = Math.random): AuctionCall {
+  const pass: AuctionCall = { type: 'pass' };
+  try {
+    return auctionChoice(ctx, auctionOptions(ctx, ctx.seat), level, rand) ?? pass;
+  } catch {
+    // Defensive: an inconsistent context must never stop the game.
+    return pass;
+  }
+}
+
+function auctionChoice(ctx: BeloteBotContext, o: AuctionOptions, level: BotLevel, rand: () => number): AuctionCall | null {
+  const tune = AUCTION_TUNING;
+  const me = ctx.seat;
+  const us = me & 1;
+  const contract = ctx.contract;
+  const W = AUCTION_WORLDS[level];
+  const leader = (ctx.dealer + 1) & 3;
+  const reading = readAuction(ctx);
+  const mine = maskOf(ctx.hand);
+  const worlds = auctionWorlds(me, mine, reading, W, rand);
+  const noise = () => (level === 'easy' ? (rand() - 0.5) * 2 * tune.easyNoise : 0);
+
+  // Answering a contre: surcontre when our contract is made in nearly every deal.
+  if (o.surcontre && contract) {
+    if (level === 'easy') return null;
+    const T = SUIT_INDEX[contract.suit];
+    let made = 0;
+    for (const hands of worlds) if (succeeds(handResult(playOut(hands, T, contract.seat, leader), beloteOf(hands, T)), contract.seat & 1, contract.value)) made++;
+    return made / W >= tune.surcontre ? { type: 'surcontre' } : null;
+  }
+
+  // Passing lets the best bid stand (or keeps the auction open: worth nothing yet).
+  let passValue = 0;
+  let contreValue = -Infinity;
+  if (contract) {
+    const T = SUIT_INDEX[contract.suit];
+    const takers = contract.seat & 1;
+    let single = 0;
+    let double = 0;
+    let made = 0;
+    for (const hands of worlds) {
+      const bt = beloteOf(hands, T);
+      const r = handResult(playOut(hands, T, contract.seat, leader), bt);
+      single += contractScore(r, takers, contract.value, 1, bt, us);
+      double += contractScore(r, takers, contract.value, 2, bt, us);
+      if (succeeds(r, takers, contract.value)) made++;
+    }
+    passValue = single / W;
+    if (takers === us) passValue += tune.partnerMargin;
+    else if (o.contre && level !== 'easy' && made / W <= tune.contre) contreValue = double / W;
+  }
+
+  let choice: AuctionCall | null = null;
+  let best = passValue;
+  if (contreValue > best) {
+    best = contreValue;
+    choice = { type: 'contre' };
+  }
+  // Taking: the lowest value that wins the auction, in each suit; or Kabbout.
+  for (const suit of SUITS) {
+    const T = SUIT_INDEX[suit];
+    let atMin = 0;
+    let madeMin = 0;
+    let atKabbout = 0;
+    let capots = 0;
+    for (const hands of worlds) {
+      const bt = beloteOf(hands, T);
+      const r = handResult(playOut(hands, T, me, leader), bt);
+      if (o.minBid !== null) {
+        atMin += contractScore(r, us, o.minBid, 1, bt, us);
+        if (succeeds(r, us, o.minBid)) madeMin++;
+      }
+      atKabbout += contractScore(r, us, 'kabbout', 1, bt, us);
+      if (r.capot === us) capots++;
+    }
+    if (o.minBid !== null && madeMin / W >= tune.minSuccess) {
+      const v = atMin / W + noise() - tune.margin;
+      if (v > best) {
+        best = v;
+        choice = { type: 'bid', value: o.minBid, suit };
+      }
+    }
+    if (o.kabbout && capots / W >= tune.kabbout) {
+      const v = atKabbout / W + noise() - tune.margin;
+      if (v > best) {
+        best = v;
+        choice = { type: 'bid', value: 'kabbout', suit };
+      }
+    }
+  }
+  return choice;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 // Hard: Monte Carlo over the hidden hands
 // ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-/** Deals sampled per decision, and the work budget (playout steps) that caps a decision's cost. */
+/** Deals sampled per card decision, and the work budget (playout steps) that caps a decision's cost. */
 const WORLDS = 40;
 const WORK_BUDGET = 60000;
 
@@ -542,19 +815,22 @@ interface Knowledge {
   known: number[];
   /** Highest trump strength each seat may still hold (7 = no limit). */
   maxTrump: number[];
+  /** Cards a seat probably holds (bids): tried first, when allowed. */
+  likely: { seat: number; cards: number[] }[];
+  /** What the auction said, and the cards each seat has played (to rebuild the hands it was dealt). */
+  reading: AuctionReading;
+  playedBy: number[];
 }
 
-/** What the rules and the announcements reveal about the hidden hands. */
+/** What the rules, the belote and the bids reveal about the hidden hands. */
 function knowledge(ctx: BeloteBotContext, sim: Sim): Knowledge {
   const T = sim.trump;
   const known = [0, 0, 0, 0];
   const maxTrump = [7, 7, 7, 7];
   const unplayed = ~sim.played;
-  if (ctx.taker !== null && ctx.upCard) known[ctx.taker]! |= (1 << codeOf(ctx.upCard)) & unplayed;
   if (ctx.belote && ctx.belote.stage === 1) known[ctx.belote.seat]! |= ((1 << (T * 8 + KING)) | (1 << (T * 8 + QUEEN))) & unplayed;
-  for (const d of ctx.declResult?.counted ?? []) known[d.seat]! |= maskOf(d.cards) & unplayed;
-  // A lower trump played when going higher was required (a trump lead, or trumping an opponent's trick):
-  // no higher trump left.
+  // A lower trump played when going higher was required (a trump lead, or trumping an opponent's trick, or
+  // a hand of nothing but trumps on the partner's trick): no higher trump left.
   for (const plays of [...ctx.tricks.map((x) => x.plays), ctx.trick]) {
     let top = -1;
     let winner = -1;
@@ -575,7 +851,11 @@ function knowledge(ctx: BeloteBotContext, sim: Sim): Knowledge {
     }
   }
   known[ctx.seat] = 0;
-  return { known, maxTrump };
+  const reading = readAuction(ctx);
+  const likely = reading.bids.map((b) => ({ seat: b.seat, cards: [b.suit * 8 + JACK, b.suit * 8 + NINE] }));
+  const playedBy = [0, 0, 0, 0];
+  for (const plays of [...ctx.tricks.map((x) => x.plays), ctx.trick]) for (const p of plays) playedBy[p.seat]! |= 1 << codeOf(p.card);
+  return { known, maxTrump, likely, reading, playedBy };
 }
 
 /** Deals the hidden cards to the other seats, consistent with what is known; null if that failed. */
@@ -593,13 +873,25 @@ function sampleHands(ctx: BeloteBotContext, sim: Sim, info: Knowledge, rand: () 
     if (room[s]! < 0) return null;
   }
   for (let s = 0; s < 4; s++) if (s !== me) pool &= ~hands[s]!;
-  const cards: number[] = [];
-  for (let m = pool; m !== 0; m &= m - 1) cards.push(lowCode(m));
   const allowed = (s: number, c: number) => {
     if (strict >= 1 && (sim.voids[s]! >> (c >> 3)) & 1) return false;
     if (strict >= 2 && c >> 3 === T && STR[T * 32 + c]! > info.maxTrump[s]!) return false;
     return true;
   };
+  // Bidders probably hold their suit's jack or nine.
+  for (const h of info.likely) {
+    if (h.seat === me || rand() >= 0.75) continue;
+    for (const c of h.cards) {
+      if (pool & (1 << c) && room[h.seat]! > 0 && allowed(h.seat, c)) {
+        hands[h.seat]! |= 1 << c;
+        pool &= ~(1 << c);
+        room[h.seat]!--;
+        break;
+      }
+    }
+  }
+  const cards: number[] = [];
+  for (let m = pool; m !== 0; m &= m - 1) cards.push(lowCode(m));
   // Most constrained cards first.
   const options = cards.map((c) => {
     let n = 0;
@@ -636,31 +928,6 @@ function sampleWorld(ctx: BeloteBotContext, sim: Sim, info: Knowledge, rand: () 
   return null;
 }
 
-/** Hand score difference (the bot's team minus the other) of a finished playout, contract rules applied. */
-function evaluate(sim: Sim, us: number, belote: number, decl: [number, number]): number {
-  const takers = sim.taker & 1;
-  const defenders = takers ^ 1;
-  const card = [sim.pts[0]!, sim.pts[1]!];
-  let capot = -1;
-  if (sim.won[0] === 8) capot = 0;
-  else if (sim.won[1] === 8) capot = 1;
-  if (capot >= 0) {
-    card[capot] = 250;
-    card[capot ^ 1] = 0;
-  }
-  const bel = [belote === 0 ? 20 : 0, belote === 1 ? 20 : 0];
-  const made = [card[0]! + bel[0]! + decl[0], card[1]! + bel[1]! + decl[1]];
-  const points = [0, 0];
-  if (made[takers]! > made[defenders]!) {
-    points[0] = made[0]!;
-    points[1] = made[1]!;
-  } else {
-    points[defenders] = made[takers] === made[defenders] ? made[defenders]! : (capot === defenders ? 250 : 162) + decl[0] + decl[1] + bel[defenders]!;
-    points[takers] = bel[takers]!;
-  }
-  return points[us]! - points[us ^ 1]!;
-}
-
 /** Team holding belote in a world (−1: nobody). */
 function beloteTeam(ctx: BeloteBotContext, sim: Sim, hands: readonly number[]): number {
   if (ctx.belote) return ctx.belote.seat & 1;
@@ -668,49 +935,40 @@ function beloteTeam(ctx: BeloteBotContext, sim: Sim, hands: readonly number[]): 
   const pair = (1 << (T * 8 + KING)) | (1 << (T * 8 + QUEEN));
   // One of them already played without a word: nobody held both.
   if (sim.played & pair) return -1;
-  for (let s = 0; s < 4; s++) if ((hands[s]! & pair) === pair) return s & 1;
-  return -1;
-}
-
-/** Announcement points that count, as far as the bot knows (before the first trick ends: a good guess). */
-function declPoints(ctx: BeloteBotContext): [number, number] {
-  if (ctx.declResult) return [ctx.declResult.points[0], ctx.declResult.points[1]];
-  const best = [0, 0];
-  const sum = [0, 0];
-  const own = ctx.trick.some((p) => p.seat === ctx.seat) || ctx.tricks.length > 0 ? [] : ctx.ownDeclarations;
-  for (const d of [...ctx.declared, ...own]) {
-    best[d.seat & 1] = Math.max(best[d.seat & 1]!, d.points);
-    sum[d.seat & 1]! += d.points;
-  }
-  if (best[0] === best[1]) return [0, 0];
-  return best[0]! > best[1]! ? [sum[0]!, 0] : [0, sum[1]!];
+  return beloteOf(hands, T);
 }
 
 function hardCard(ctx: BeloteBotContext, sim: Sim, legal: number, rand: () => number): number {
+  const contract = ctx.contract!;
   const moves: number[] = [];
   for (let m = legal; m !== 0; m &= m - 1) moves.push(lowCode(m));
   const info = knowledge(ctx, sim);
   const us = ctx.seat & 1;
-  const decl = declPoints(ctx);
+  const takers = contract.seat & 1;
   const totals = new Array<number>(moves.length).fill(0);
-  let worlds = 0;
-  let work = 0;
   const perWorld = moves.length * (32 - bitCount(sim.played));
-  for (let w = 0; w < WORLDS && work + perWorld <= WORK_BUDGET; w++) {
+  const n = Math.max(1, Math.min(WORLDS, Math.floor(WORK_BUDGET / perWorld)));
+  // Deals consistent with the play so far, drawn in proportion to how well they agree with the auction.
+  const candidates: number[][] = [];
+  const weights: number[] = [];
+  for (let i = 0; i < n * 3; i++) {
     const hands = sampleWorld(ctx, sim, info, rand);
     if (!hands) continue;
-    const belote = beloteTeam(ctx, sim, hands);
+    candidates.push(hands);
+    weights.push(readingWeight(hands.map((h, seat) => h | info.playedBy[seat]!), info.reading));
+  }
+  const worlds = resample(candidates, weights, n, rand);
+  for (const hands of worlds) {
+    const bt = beloteTeam(ctx, sim, hands);
     for (let i = 0; i < moves.length; i++) {
       const s = sim.clone();
       s.hands = hands.slice();
       s.apply(ctx.seat, moves[i]!);
       while (s.done < 8) s.apply(s.turn, heuristic(s, s.turn));
-      totals[i]! += evaluate(s, us, belote, decl);
+      totals[i]! += contractScore(handResult(s, bt), takers, contract.value, ctx.coinche, bt, us);
     }
-    work += perWorld;
-    worlds++;
   }
-  if (worlds === 0) return heuristic(sim, ctx.seat);
+  if (worlds.length === 0) return heuristic(sim, ctx.seat);
   let best = 0;
   for (let i = 1; i < moves.length; i++) if (totals[i]! > totals[best]! + 1e-9) best = i;
   // Exact ties: the heuristic's choice if it is among them, else the first.
@@ -723,7 +981,7 @@ function hardCard(ctx: BeloteBotContext, sim: Sim, legal: number, rand: () => nu
 /** The bot's card: always one of the legal cards' ids. Throws only when the bot has no card at all. */
 export function chooseBeloteCard(ctx: BeloteBotContext, level: BotLevel = 'normal', rand: () => number = Math.random): string {
   if (ctx.hand.length === 0) throw new Error('chooseBeloteCard: the bot has no card to play');
-  if (!ctx.trump) throw new Error('chooseBeloteCard: no trump yet');
+  if (!ctx.trump || !ctx.contract) throw new Error('chooseBeloteCard: no contract yet');
   const sim = buildSim(ctx);
   const legal = sim.legal(ctx.seat);
   if (legal === 0) return ctx.hand[0]!.id;

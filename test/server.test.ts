@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, onTestFinished } from 'vitest';
 import { io as ioClient, type Socket } from 'socket.io-client';
 import { legalMovesFor } from '../src/shared/chkobba';
-import { legalCards } from '../src/shared/belote';
+import { type AuctionCall, auctionOptions, legalCards } from '../src/shared/belote';
 import { SUITS } from '../src/shared/cards';
 import { DEFAULT_SETTINGS } from '../src/shared/protocol';
 import {
@@ -139,7 +139,7 @@ afterAll(async () => {
 /** What changes whenever someone acts. */
 function stateKey(g: GameView | null | undefined): string {
   if (!g) return '';
-  return JSON.stringify(g.kind === 'chkobba' ? g.table : [g.trick, g.bids.length, g.stage, g.round, g.tricksWon]) + g.turn;
+  return JSON.stringify(g.kind === 'chkobba' ? g.table : [g.trick, g.auction.length, g.stage, g.round, g.tricksWon]) + g.turn;
 }
 
 /** Plays a random legal action for `actor`, whatever the game. */
@@ -149,10 +149,16 @@ async function randomAction(actor: TestClient) {
   const before = actor.events.length;
   if (g.kind === 'belote') {
     if (g.stage === 'bidding') {
-      const up = g.upCard!.suit;
-      const options = g.bidRound === 1 ? [up] : SUITS.filter((x) => x !== up);
-      const suit = Math.random() < 0.35 ? options[Math.floor(Math.random() * options.length)]! : null;
-      expect(await actor.call('bid', { suit })).toEqual({ ok: true });
+      // Mostly passes, so that auctions end; now and then a bid, a Kabbout, a contre or a surcontre.
+      const o = auctionOptions(g, seat);
+      const calls: AuctionCall[] = [{ type: 'pass' }, { type: 'pass' }];
+      const suit = SUITS[Math.floor(Math.random() * SUITS.length)]!;
+      if (o.minBid !== null) calls.push({ type: 'bid', value: Math.min(160, o.minBid + 10 * Math.floor(Math.random() * 2)), suit });
+      if (o.kabbout && Math.random() < 0.05) calls.push({ type: 'bid', value: 'kabbout', suit });
+      if (o.contre && Math.random() < 0.3) calls.push({ type: 'contre' });
+      if (o.surcontre && Math.random() < 0.5) calls.push({ type: 'surcontre' });
+      const call = calls[Math.floor(Math.random() * calls.length)]!;
+      expect(await actor.call('bid', call)).toEqual({ ok: true });
     } else {
       const legal = legalCards(g.myHand!, g.trick, g.trump!, seat);
       expect(legal.length).toBeGreaterThan(0);
@@ -481,15 +487,15 @@ describe('server', () => {
       Object.assign(SIP_TIMING, saved);
     }
   });
-  it('switches a table to Belote: 2 vs 2, its own targets, announcements on or off', async () => {
+  it('switches a table to Belote: 2 vs 2, played to 1000, 1500 or 2000', async () => {
     const host = client('belo-secret', 'Belo');
     await host.call('create', { settings: { game: 'belote' } });
     await host.waitFor(() => host.room?.settings.game === 'belote' && host.room.seats.length === 4, 4000, 'belote room');
-    expect(host.room!.settings).toMatchObject({ game: 'belote', mode: '2v2', targetScore: 501, announcements: true });
+    expect(host.room!.settings).toMatchObject({ game: 'belote', mode: '2v2', targetScore: 1500 });
     expect((await host.call('settings', { mode: '1v1' })).ok).toBe(false);
     expect((await host.call('settings', { targetScore: 21 })).ok).toBe(false);
-    expect(await host.call('settings', { targetScore: 1001, announcements: false })).toEqual({ ok: true });
-    await host.waitFor(() => host.room!.settings.targetScore === 1001 && !host.room!.settings.announcements, 4000, 'settings');
+    expect(await host.call('settings', { targetScore: 2000 })).toEqual({ ok: true });
+    await host.waitFor(() => host.room!.settings.targetScore === 2000, 4000, 'settings');
     // Back to Chkobba: its own default target, and the table keeps its four seats.
     expect(await host.call('settings', { game: 'chkobba' })).toEqual({ ok: true });
     await host.waitFor(() => host.room!.settings.game === 'chkobba', 4000, 'chkobba');
@@ -501,7 +507,7 @@ describe('server', () => {
     const a = client('bel-a-secret', 'Amira');
     const b = client('bel-b-secret', 'Bilel');
     const spec = client('bel-s-secret', 'Sana');
-    const code = (await a.call<{ ok: boolean; code: string }>('create', { settings: { game: 'belote' } })).code;
+    const code = (await a.call<{ ok: boolean; code: string }>('create', { settings: { game: 'belote', targetScore: 1000 } })).code;
     expect(await b.call('join', { code })).toMatchObject({ ok: true });
     await a.waitFor(() => a.room?.seats[1], 4000, 'Bilel seated');
     for (const seat of [2, 3]) expect(await a.call('addBot', { seat })).toEqual({ ok: true });
@@ -510,12 +516,12 @@ describe('server', () => {
     expect(await a.call('start')).toEqual({ ok: true });
 
     const belote = (c: TestClient) => (c.room?.game?.kind === 'belote' ? c.room.game : null);
-    const dealt = await a.waitFor(() => belote(a)?.myHand?.length === 5 && belote(a), 4000, 'deal');
-    await b.waitFor(() => belote(b)?.myHand?.length === 5, 4000, 'deal for Bilel');
+    const dealt = await a.waitFor(() => belote(a)?.myHand?.length === 8 && belote(a), 4000, 'deal');
+    await b.waitFor(() => belote(b)?.myHand?.length === 8, 4000, 'deal for Bilel');
     await spec.waitFor(() => belote(spec), 4000, 'spectator view');
     expect(dealt.stage).toBe('bidding');
-    expect(dealt.stockCount).toBe(11);
-    expect(dealt.upCard).not.toBeNull();
+    expect(dealt.contract).toBeNull();
+    expect(dealt.coinche).toBe(1);
     expect(belote(spec)!.myHand).toBeNull();
     // Hands are private: nobody else sees Amira's cards.
     const others = JSON.stringify(b.room) + JSON.stringify(b.events) + JSON.stringify(spec.room) + JSON.stringify(spec.events);
@@ -524,11 +530,12 @@ describe('server', () => {
     // Out of turn, or a card during the bidding: refused.
     const g = belote(a)!;
     const waiting = g.turn === a.room!.you.seat ? b : g.turn === b.room!.you.seat ? a : a;
-    if (g.turn !== waiting.room!.you.seat) expect((await waiting.call('bid', { suit: null })).ok).toBe(false);
+    if (g.turn !== waiting.room!.you.seat) expect((await waiting.call('bid', { type: 'pass' })).ok).toBe(false);
     expect((await a.call('play', { cardId: dealt.myHand![0]!.id })).ok).toBe(false);
 
-    // Play on; once, try a card the rules forbid.
+    // Play on; once, try a card the rules forbid, and calls the auction does not allow.
     let refused = '';
+    let badCall = '';
     for (let step = 0; step < 3000 && a.room!.phase !== 'gameOver'; step++) {
       const version = a.room!.version;
       for (const p of [a, b]) await p.waitFor(() => p.room!.version >= version, 4000, 'sync');
@@ -547,6 +554,14 @@ describe('server', () => {
         continue;
       }
       const mine = belote(actor)!;
+      if (!badCall && mine.stage === 'bidding' && mine.coinche === 1) {
+        const low = await actor.call<{ ok: boolean; error?: string }>('bid', { type: 'bid', value: 80, suit: 'H' });
+        expect(low.ok).toBe(false);
+        expect((await actor.call('bid', { type: 'surcontre' })).ok).toBe(false);
+        expect((await actor.call('bid', { type: 'bid', value: 95, suit: 'H' })).ok).toBe(false);
+        expect((await actor.call('bid', 'pass')).ok).toBe(false);
+        badCall = low.error ?? '';
+      }
       if (!refused && mine.stage === 'playing' && mine.trick.length > 0) {
         const legal = new Set(legalCards(mine.myHand!, mine.trick, mine.trump!, actor.room!.you.seat!).map((c) => c.id));
         const bad = mine.myHand!.find((c) => !legal.has(c.id));
@@ -560,22 +575,23 @@ describe('server', () => {
     }
     expect(a.room!.phase).toBe('gameOver');
     expect(refused).toMatch(/must/);
+    expect(badCall).toMatch(/Bid at least|Kabbout/);
     const fin = belote(a)!;
     expect(fin.winner).not.toBeNull();
-    expect(Math.max(...fin.scores)).toBeGreaterThanOrEqual(501);
+    expect(Math.max(...fin.scores)).toBeGreaterThanOrEqual(1000);
     expect(fin.lastRound).not.toBeNull();
     await spec.waitFor(() => spec.room?.phase === 'gameOver', 4000, 'spectator sees the end');
     // Spectators never get cards of their own; every event kind of a Belote hand went by.
     const kinds = new Set(spec.events.map((e) => e.kind));
-    for (const k of ['beloteDeal', 'beloteBid', 'beloteTake', 'belotePlay', 'beloteTrick', 'beloteEnd']) expect(kinds.has(k as never)).toBe(true);
-    for (const e of spec.events) if (e.kind === 'beloteDeal' || e.kind === 'beloteTake') expect(e.myCards).toBeNull();
+    for (const k of ['beloteDeal', 'beloteBid', 'beloteContract', 'belotePlay', 'beloteTrick', 'beloteEnd']) expect(kinds.has(k as never)).toBe(true);
+    for (const e of spec.events) if (e.kind === 'beloteDeal') expect(e.myCards).toBeNull();
   }, 60_000);
 
   it('passes for a Belote player whose time runs out in the bidding, and plays for them in the tricks', () => {
-    const table = createTable({ ...DEFAULT_SETTINGS, game: 'belote', mode: '2v2', targetScore: 501 }, 4, seededRandom(4));
+    const table = createTable({ ...DEFAULT_SETTINGS, game: 'belote', mode: '2v2', targetScore: 1500 }, 4, seededRandom(4));
     table.startRound();
     const seat = table.turn;
-    expect(table.autoAction(seat, 'normal', seededRandom(1), 'timeout')).toEqual({ type: 'bid', suit: null });
+    expect(table.autoAction(seat, 'normal', seededRandom(1), 'timeout')).toEqual({ type: 'bid', call: { type: 'pass' } });
     const names = { seat: () => 'x', team: () => 'y' };
     // Bots bid at their level; someone takes eventually (or the cards are dealt again).
     for (let i = 0; i < 40 && table.view(null).kind === 'belote' && (table.view(null) as { stage: string }).stage === 'bidding'; i++) {

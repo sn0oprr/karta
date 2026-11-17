@@ -1,6 +1,6 @@
-import { suitName, suitSymbol } from '../../shared/cards';
+import { suitSymbol } from '../../shared/cards';
 import type { RoundResult, Team } from '../../shared/chkobba';
-import { type BeloteRoundResult, declarationName } from '../../shared/belote';
+import { type BeloteRoundResult, contractLabel } from '../../shared/belote';
 import type { RoomView } from '../../shared/protocol';
 import { teamOf } from '../../shared/teams';
 import { sfx } from '../sfx';
@@ -85,9 +85,15 @@ export class ResultsView {
       );
       sfx.play(won || myTeam === null ? 'win' : 'lose');
     } else if (g.kind === 'belote' && g.lastRound) {
-      const b = g.lastRound;
+      const { contract, coinche } = g.lastRound;
       content.append(
-        h('h2', null, `Hand ${r.round} — ${seatName(room, b.taker)} took `, h('span', { class: `suit-${b.trump}` }, suitSymbol(b.trump))),
+        h(
+          'h2',
+          null,
+          `Hand ${r.round} — ${seatName(room, contract.seat)} bid ${contract.value === 'kabbout' ? 'Kabbout' : contract.value} `,
+          h('span', { class: `suit-${contract.suit}` }, suitSymbol(contract.suit)),
+          coinche > 1 ? ` ×${coinche}` : '',
+        ),
       );
     } else content.append(h('h2', null, `Hand ${r.round} — results`));
 
@@ -204,35 +210,47 @@ export class ResultsView {
 
   private beloteBody(room: RoomView, r: BeloteRoundResult): HTMLElement[] {
     const row = this.rows();
-    const takers = teamOf(r.taker);
+    const takers = teamOf(r.contract.seat);
+    const defence: Team = takers === 0 ? 1 : 0;
+    const winners = r.outcome === 'made' ? takers : defence;
+    const kabbout = r.contract.value === 'kabbout';
     const cell = (text: string, win = false) => h('td', { class: win ? 'win' : '' }, text);
     const cards = (t: Team) => {
       const tricks = `${r.tricks[t]} trick${r.tricks[t] === 1 ? '' : 's'}`;
       return h('td', { class: r.capot === t ? 'win' : '' }, h('span', { class: 'cell stack' }, String(r.cardPoints[t]), h('small', { class: 'cell-sub' }, r.capot === t ? 'capot!' : tricks)));
     };
-    const decl = r.declarations;
-    const declCell = (t: Team) => {
-      if (decl.team !== t) return cell('—');
-      const names = decl.counted.map((d) => declarationName(d));
-      return h('td', { class: 'win' }, h('span', { class: 'cell stack' }, String(decl.points[t]), h('small', { class: 'cell-sub' }, names.join(', '))));
-    };
+    const played = r.tricks[0] + r.tricks[1];
     const rows = [
-      row('Cards', `trick points · 10 for the last`, [cards(0), cards(1)]),
+      row('Cards', r.early ? `thrown in after ${played} trick${played === 1 ? '' : 's'}` : 'trick points · 10 for the last', [cards(0), cards(1)]),
+      row('Rounded', 'to the nearest ten', [cell(String(r.rounded[0])), cell(String(r.rounded[1]))]),
       row('Belote', 'king & queen of trumps', [cell(r.belote === 0 ? '20' : '—', r.belote === 0), cell(r.belote === 1 ? '20' : '—', r.belote === 1)]),
+      row('Made', kabbout ? 'Kabbout: every trick' : `${r.contract.value} needed, and more than the others`, [
+        cell(String(r.made[0]), winners === 0),
+        cell(String(r.made[1]), winners === 1),
+      ]),
     ];
-    if (room.settings.announcements || decl.team !== null) rows.push(row('Announcements', 'the best ones count', [declCell(0), declCell(1)]));
-    rows.push(row('Made', `takers need more than half`, [cell(String(r.made[0]), r.made[0] > r.made[1]), cell(String(r.made[1]), r.made[1] > r.made[0])]));
 
     const verdict = h('div', { class: `verdict ${r.outcome}` });
-    const sym = suitSymbol(r.trump);
-    const taker = seatName(room, r.taker);
-    const defenders = sideLabel(room, takers === 0 ? 1 : 0);
-    if (r.outcome === 'made') {
-      verdict.append(r.capot === takers ? `🎉 Capot! ${taker} took ${sym} and every trick.` : `✓ ${taker} took ${sym} and made it: ${r.made[takers]} to ${r.made[1 - takers]}.`);
-    } else if (r.outcome === 'dedans') {
-      verdict.append(`💥 Dedans! ${taker} took ${sym} (${suitName(r.trump).toLowerCase()}) but made only ${r.made[takers]}: ${defenders} score ${r.capot !== null ? 250 : 162}${decl.team !== null ? ' + announcements' : ''}.`);
-    } else verdict.append(`⚖️ Litige — ${r.made[takers]} each. ${r.reserveOut} points wait for whoever wins the next hand.`);
-    if (r.reserveIn > 0 && r.reserveTo !== null) verdict.append(h('div', { class: 'muted' }, `+${r.reserveIn} held over from the litige go to ${sideLabel(room, r.reserveTo)}.`));
+    const taker = seatName(room, r.contract.seat);
+    const label = `${contractLabel(r.contract)}${r.coinche > 1 ? ` ×${r.coinche}` : ''}`;
+    const defenders = sideLabel(room, defence);
+    const scores = (t: Team) => `${sideLabel(room, t)} +${r.points[t]}`;
+    const value = r.contract.value;
+    if (value === 'kabbout') {
+      verdict.append(r.outcome === 'made' ? `🎉 Kabbout! ${taker} took every trick: ${scores(takers)}.` : `💥 Kabbout lost — ${defenders} won a trick: ${scores(defence)}.`);
+    } else if (r.outcome === 'failed') {
+      const why = r.early ? 'and could no longer make it' : r.made[takers] >= value ? `but not more than ${r.made[defence]}` : `but made ${r.made[takers]}`;
+      verdict.append(`💥 Chute! ${taker} bid ${label} ${why}: ${scores(defence)}.`);
+      verdict.append(h('div', { class: 'muted' }, `A failed contract gives the other team 160${r.coinche > 1 ? ` × ${r.coinche}` : ''}${r.belote !== null ? ', and the belote' : ''}.`));
+    } else if (r.capot === takers && r.coinche === 1) {
+      verdict.append(`🎉 Capot! ${taker} bid ${label} and took every trick: ${scores(takers)}.`);
+    } else if (r.coinche > 1) {
+      verdict.append(`✓ ${taker} made ${label}, ${r.made[takers]} to ${r.made[defence]}: ${scores(takers)}.`);
+      verdict.append(h('div', { class: 'muted' }, `A contract made after a contre scores ${r.capot === takers ? 250 : 160} × ${r.coinche}${r.belote !== null ? ', and the belote' : ''}.`));
+    } else {
+      verdict.append(`✓ ${taker} made ${label}: ${r.made[takers]} to ${r.made[defence]}.`);
+      verdict.append(h('div', { class: 'muted' }, 'Each team scores what it made.'));
+    }
     return [this.table(room, rows), verdict];
   }
 

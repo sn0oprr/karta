@@ -107,7 +107,7 @@ export function trumpTokenPosition(view: number, n: number): THREE.Vector3 {
   return viewDir(view, n).multiplyScalar(2.25).add(viewRight(view, n).multiplyScalar(-2.0));
 }
 
-/** Everywhere a Belote card lies in the middle of the table (the trick and the turned card), with a margin. */
+/** Everywhere a Belote card lies in the middle of the table (the trick), with a margin. */
 export const BELOTE_CARD_EXTENT = { x: 1.42 + CARD_W / 2 + 0.15, z: 1.05 + CARD_H / 2 + 0.15 };
 
 /** Fanned layout for N cards held by an opponent (in the avatar's hand-anchor space). */

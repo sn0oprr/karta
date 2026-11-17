@@ -10,14 +10,13 @@ export const TIMING = {
   playCapture: 1300,
   chkobbaBonus: 1700,
   roundEnd: 1800,
-  /** Belote: the card turned up after the deal, a pass, a take, a card into the trick, a finished trick. */
-  beloteTurnUp: 600,
+  /** Belote: a lot of 4 cards dealt, a pass, a bid (or contre), the contract settled, a card, a trick. */
+  beloteDealLot: 230,
   belotePass: 450,
-  beloteTake: 900,
+  beloteBid: 800,
+  beloteContract: 1000,
   belotePlay: 650,
   beloteTrick: 1250,
-  /** Extra time after the first trick when announcements are settled. */
-  beloteDeclarations: 900,
   botThinkMin: 650,
   botThinkMax: 1500,
   autopilotDelay: 1100,

@@ -757,12 +757,31 @@ button.game-tile:active {
   font-size: 1.05rem;
 }
 
-/* Belote: the trump suit between the scores, and a ring around the team that took. */
+/* Belote: the contract between the scores, and a ring around the team that took. */
+.score-mid .contract {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  margin-top: 1px;
+  font-family: var(--font-title);
+  font-size: 0.95rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .score-mid .trump {
   font-family: var(--font);
   font-size: 1.3rem;
   line-height: 1;
-  margin-top: 1px;
+}
+
+.score-mid .coinche {
+  margin-left: 2px;
+  padding: 0 3px;
+  border-radius: 4px;
+  background: var(--coral);
+  color: #fff;
+  font-size: 0.75rem;
 }
 
 .score-team.taker {
@@ -1268,12 +1287,8 @@ button.game-tile:active {
   background: #e3f7df;
 }
 
-.verdict.dedans {
+.verdict.failed {
   background: #ffd6d6;
-}
-
-.verdict.litige {
-  background: #fff1a8;
 }
 
 .verdict .muted {
@@ -1959,11 +1974,6 @@ button.game-tile:active {
   color: var(--ink-soft);
 }
 
-.bid-card .mini-card {
-  width: 54px;
-  height: 81px;
-}
-
 .bid-actions {
   display: flex;
   gap: 8px;
@@ -1971,21 +1981,49 @@ button.game-tile:active {
   flex-wrap: wrap;
 }
 
-.bid-take .sym {
-  font-family: var(--font);
-  font-size: 1.4em;
-  line-height: 0.8;
+/* The value to bid: − 110 + */
+.bid-stepper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
 }
 
-.bid-take.red .sym {
+.bid-stepper .bid-step {
+  min-width: 38px;
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+.bid-value {
+  min-width: 3.2em;
+  font-family: var(--font-title);
+  font-size: 1.8rem;
+  line-height: 1;
+}
+
+.bid-value.kabbout {
+  font-size: 1.35rem;
   color: var(--red);
 }
 
-.bid-actions.suits .bid-take {
+/* Clicking a suit bids the value in that suit. */
+.bid-actions.suits {
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+
+.bid-actions.suits .bid-suit {
   --bg: #fff;
-  min-width: 54px;
-  padding: 0.3em 0.55em;
-  font-size: 1.3rem;
+  min-width: 46px;
+  padding: 0.25em 0.4em;
+  font-family: var(--font);
+  font-size: 1.45rem;
+  line-height: 1;
+}
+
+.bid-suit.red {
+  color: var(--red);
 }
 
 .bid-actions .chosen {
@@ -2031,7 +2069,7 @@ button.game-tile:active {
     animation-name: chooser-in-mobile;
   }
 
-  /* Just above the turn banner, clear of the turned card in the middle of the table. */
+  /* Just above the turn banner, clear of the trick in the middle of the table. */
   .bid-panel {
     right: 50%;
     top: auto;
@@ -2043,13 +2081,16 @@ button.game-tile:active {
     animation-name: chooser-in-mobile;
   }
 
-  .bid-card,
   .bid-sub {
     display: none;
   }
 
   .bid-title {
     font-size: 1.15rem;
+  }
+
+  .bid-value {
+    font-size: 1.5rem;
   }
 
   @keyframes chooser-in-mobile {
@@ -2410,6 +2451,14 @@ button.game-tile:active {
     font-size: 0.85rem;
   }
 
+  .score-mid .contract {
+    font-size: 0.75rem;
+  }
+
+  .score-mid .trump {
+    font-size: 1rem;
+  }
+
   .hud-bottom,
   .hud.in-lobby .hud-bottom {
     bottom: calc(8px + var(--safe-bottom));
@@ -2486,13 +2535,21 @@ button.game-tile:active {
     gap: 6px;
   }
 
-  .bid-card,
   .bid-sub {
     display: none;
   }
 
   .bid-title {
     font-size: 1.1rem;
+  }
+
+  .bid-value {
+    font-size: 1.35rem;
+  }
+
+  .bid-actions.suits .bid-suit {
+    min-width: 42px;
+    font-size: 1.25rem;
   }
 
   .tag-pill {

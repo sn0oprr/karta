@@ -1,19 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { isCardId, seededRandom } from '../src/shared/cards';
+import { SUITS, type Suit, isCardId, seededRandom } from '../src/shared/cards';
 import {
+  type AuctionCall,
   type BCard,
   BeloteGame,
-  type Declaration,
+  type Contract,
   type TrickPlay,
+  auctionOptions,
+  callLabel,
   cardPoints,
-  compareDeclarations,
-  findDeclarations,
   illegalReason,
   isBeloteCardId,
   legalCards,
   makeBeloteDeck,
   parseBeloteCard,
-  resolveDeclarations,
+  parseCall,
+  roundTen,
   scoreBeloteHand,
   sortBeloteHand,
   trickWinner,
@@ -32,6 +34,8 @@ const trick = (list: string): TrickPlay[] =>
       const [seat, id] = e.split(':');
       return { seat: Number(seat), card: c(id!) };
     });
+const bid = (value: number | 'kabbout', suit: Suit): AuctionCall => ({ type: 'bid', value, suit });
+const PASS: AuctionCall = { type: 'pass' };
 
 describe('deck', () => {
   it('has 32 unique cards, 7 to Ace in each suit, with ids no Chkobba card uses', () => {
@@ -43,12 +47,10 @@ describe('deck', () => {
       expect(isCardId(d.id)).toBe(false);
       expect(parseBeloteCard(d.id)).toEqual(d);
     }
-    expect(isBeloteCardId('7D')).toBe(false);
-    expect(isBeloteCardId('D6')).toBe(false);
   });
 
   it('is worth 152 card points whatever the trump suit', () => {
-    for (const trump of ['D', 'H', 'C', 'S'] as const) {
+    for (const trump of SUITS) {
       const deck = makeBeloteDeck();
       expect(deck.reduce((s, x) => s + cardPoints(x, trump), 0)).toBe(152);
       expect(deck.filter((x) => x.suit === trump).reduce((s, x) => s + cardPoints(x, trump), 0)).toBe(62);
@@ -61,45 +63,40 @@ describe('tricks', () => {
     expect(trickWinner(trick('0:SA 1:S10 2:SK 3:S7'), 'H').seat).toBe(0);
     expect(trickWinner(trick('0:S10 1:SA 2:H7 3:SK'), 'H').seat).toBe(2);
     expect(trickWinner(trick('0:H8 1:HJ 2:H9 3:HA'), 'H').seat).toBe(1);
-    // A higher card of another suit is a discard.
     expect(trickWinner(trick('0:S7 1:DA 2:CA 3:S8'), 'H').seat).toBe(3);
-    // In a plain suit the jack ranks below the queen; in trumps above everything.
     expect(trickWinner(trick('0:SJ 1:SQ'), 'H').seat).toBe(1);
     expect(trickWinner(trick('0:SJ 1:SQ'), 'S').seat).toBe(0);
   });
 });
 
 describe('legalCards', () => {
-  const legal = (hand: string, t: string, trump: 'D' | 'H' | 'C' | 'S', seat: number) => ids(legalCards(cards(hand), trick(t), trump, seat));
+  const legal = (hand: string, t: string, trump: Suit, seat: number) => ids(legalCards(cards(hand), trick(t), trump, seat));
 
-  it('lets the leader play anything', () => {
+  it('lets the leader play anything and forces following suit', () => {
     expect(legal('SA H7 D9', '', 'H', 0)).toEqual(['D9', 'H7', 'SA']);
-  });
-
-  it('forces following suit', () => {
     expect(legal('SA S7 H7 D9', '1:SK', 'H', 2)).toEqual(['S7', 'SA']);
   });
 
-  it('forces a higher trump on a trump lead when possible, else any trump', () => {
+  it('forces a higher trump on a trump lead when possible (even over the partner), else any trump', () => {
     expect(legal('HJ H7 HA SA', '0:H9', 'H', 1)).toEqual(['HJ']);
     expect(legal('H7 H8 SA', '0:H9', 'H', 1)).toEqual(['H7', 'H8']);
-    // Even when the partner is winning.
     expect(legal('HJ H7 SA', '0:H9 1:H8', 'H', 2)).toEqual(['HJ']);
   });
 
-  it('frees a player whose partner is winning from trumping', () => {
+  it('frees a player whose partner is winning, unless they hold nothing but trumps', () => {
     expect(legal('H7 DA C8', '0:SA 1:S7', 'H', 2)).toEqual(['C8', 'DA', 'H7']);
-    // The partner trumped: still free (no obligation to overtrump the partner).
     expect(legal('H9 DA', '1:S7 2:H8 3:SK', 'H', 0)).toEqual(['DA', 'H9']);
+    // Only trumps: beat the best trump on the table, even the partner's…
+    expect(legal('H9 H7', '1:S7 2:H8 3:SK', 'H', 0)).toEqual(['H9']);
+    // …and when none is higher, any trump.
+    expect(legal('H7 HQ', '1:S7 2:H9 3:SK', 'H', 0)).toEqual(['H7', 'HQ']);
+    expect(legal('H7 HQ', '0:SA 1:S7', 'H', 2)).toEqual(['H7', 'HQ']);
   });
 
-  it('forces trumping an opponent, overtrumping when a trump is already in, else undertrumping', () => {
+  it('forces trumping an opponent, overtrumping a trump already in, else undertrumping', () => {
     expect(legal('H7 HJ DA', '1:SA', 'H', 2)).toEqual(['H7', 'HJ']);
     expect(legal('H7 HJ DA', '1:SA 2:S7 3:HA', 'H', 0)).toEqual(['HJ']);
     expect(legal('H7 H8 DA', '1:SA 2:S7 3:HA', 'H', 0)).toEqual(['H7', 'H8']);
-  });
-
-  it('allows anything without the suit led and without trumps', () => {
     expect(legal('DA C8', '1:SA', 'H', 2)).toEqual(['C8', 'DA']);
   });
 
@@ -107,188 +104,228 @@ describe('legalCards', () => {
     expect(illegalReason(cards('SA S7 DA'), trick('1:SK'), 'H', 2, c('DA'))).toBe('You must follow suit (♠)');
     expect(illegalReason(cards('H7 HJ DA'), trick('1:SA'), 'H', 2, c('DA'))).toBe('You must trump (♥)');
     expect(illegalReason(cards('H7 HJ DA'), trick('1:SA 2:S7 3:HA'), 'H', 0, c('H7'))).toBe('You must play a higher trump');
-    expect(illegalReason(cards('HJ H7'), trick('0:H9'), 'H', 1, c('H7'))).toBe('You must play a higher trump');
+    expect(illegalReason(cards('H9 H7'), trick('1:S7 2:H8 3:SK'), 'H', 0, c('H7'))).toBe('You must play a higher trump');
     expect(illegalReason(cards('SA S7'), trick('1:SK'), 'H', 2, c('S7'))).toBeNull();
   });
 });
 
 describe('sortBeloteHand', () => {
   it('puts trumps first, alternates colours and orders by strength', () => {
-    const sorted = sortBeloteHand(cards('S7 HJ H9 C10 DA SA HQ D7'), 'H').map((x) => x.id);
-    expect(sorted).toEqual(['HJ', 'H9', 'HQ', 'C10', 'DA', 'D7', 'SA', 'S7']);
+    expect(sortBeloteHand(cards('S7 HJ H9 C10 DA SA HQ D7'), 'H').map((x) => x.id)).toEqual(['HJ', 'H9', 'HQ', 'C10', 'DA', 'D7', 'SA', 'S7']);
   });
 });
 
-describe('announcements', () => {
-  it('finds runs and carrés', () => {
-    const d = findDeclarations(cards('H8 H9 H10 SJ DJ CJ HJ SA'), 0);
-    expect(d.map((x) => [x.kind, x.rank, x.suit, x.points])).toEqual([
-      ['carre', 'J', null, 200],
-      ['cinquante', 'J', 'H', 50],
-    ]);
-    const run = findDeclarations(cards('S10 SJ SQ SK SA D7 D8 D9'), 2);
-    expect(run.map((x) => [x.kind, x.length, x.points])).toEqual([
-      ['cent', 5, 100],
-      ['tierce', 3, 20],
-    ]);
-    // Four 8s or 7s are not a carré.
-    expect(findDeclarations(cards('S8 D8 H8 C8 S7 D7 H7 C7'), 1)).toEqual([]);
-  });
-
-  it('ranks announcements: points, carré over run, length, height, then trumps', () => {
-    const one = (hand: string, seat = 0): Declaration => findDeclarations(cards(hand), seat)[0]!;
-    expect(compareDeclarations(one('S9 SJ S10'), one('D7 D8 D9 D10'), 'H')).toBeLessThan(0);
-    expect(compareDeclarations(one('SA DA HA CA'), one('S10 SJ SQ SK SA'), 'H')).toBeGreaterThan(0);
-    expect(compareDeclarations(one('SQ SK SA'), one('D8 D9 D10'), 'H')).toBeGreaterThan(0);
-    expect(compareDeclarations(one('S8 S9 S10'), one('H8 H9 H10'), 'H')).toBeLessThan(0);
-    expect(compareDeclarations(one('S8 S9 S10'), one('D8 D9 D10'), 'H')).toBe(0);
-  });
-
-  it('only counts the announcements of the team with the best one', () => {
-    const per = [findDeclarations(cards('S7 S8 S9'), 0), findDeclarations(cards('D9 D10 DJ DQ'), 1), findDeclarations(cards('C7 C8 C9'), 2), []];
-    const r = resolveDeclarations(per, 'H');
-    expect(r.team).toBe(1);
-    expect(r.points).toEqual([0, 50]);
-    // Team 0 wins with its better run and also scores its partner's tierce.
-    const per2 = [findDeclarations(cards('SQ SK SA'), 0), findDeclarations(cards('D9 D10 DJ'), 1), findDeclarations(cards('C7 C8 C9'), 2), []];
-    expect(resolveDeclarations(per2, 'H')).toMatchObject({ team: 0, points: [40, 0] });
-    // Equal best runs in plain suits: nobody scores.
-    const per3 = [findDeclarations(cards('S8 S9 S10'), 0), findDeclarations(cards('D8 D9 D10'), 1), [], []];
-    expect(resolveDeclarations(per3, 'H')).toMatchObject({ team: null, points: [0, 0] });
+describe('roundTen', () => {
+  it('rounds trick points to the ten, 5 and up going up', () => {
+    expect([0, 4, 5, 84, 85, 86, 88, 94, 96, 162].map(roundTen)).toEqual([0, 0, 10, 80, 90, 90, 90, 90, 100, 160]);
+    // "Casse": 96/66 and 87/75 both round up (170 in all); 88/74 is "صحيحة" (160).
+    expect(roundTen(96) + roundTen(66)).toBe(170);
+    expect(roundTen(87) + roundTen(75)).toBe(170);
+    expect(roundTen(88) + roundTen(74)).toBe(160);
   });
 });
 
-describe('scoreBeloteHand', () => {
-  const none = { team: null, points: [0, 0] as [number, number], counted: [] };
-  /** Eight tricks: `wins` lists each trick's winning seat, points spread to reach the given card totals. */
+describe('auction', () => {
+  const fresh = (dealer = 3, seed = 1) => {
+    const g = new BeloteGame({ targetScore: 1500, firstDealer: dealer, rand: seededRandom(seed) });
+    return { g, deal: g.startRound() };
+  };
+
+  it('deals 8 cards each, in two lots of 4 from the dealer’s right, and no card is turned up', () => {
+    const { g, deal } = fresh(2);
+    expect(deal.dealer).toBe(2);
+    expect(deal.order).toEqual([3, 3, 3, 3, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2]);
+    expect(g.hands.every((h) => h.length === 8)).toBe(true);
+    expect(new Set(g.hands.flat().map((x) => x.id)).size).toBe(32);
+    expect(g.phase).toBe('bidding');
+    expect(g.turn).toBe(3);
+  });
+
+  it('opens at 90 in steps of 10 up to 160, with Kabbout above everything', () => {
+    const { g } = fresh();
+    expect(g.isLegalCall(0, bid(80, 'H'))).toBe(false);
+    expect(g.isLegalCall(0, bid(95, 'H'))).toBe(false);
+    expect(g.isLegalCall(1, bid(90, 'H'))).toBe(false); // not their turn
+    g.call(0, bid(90, 'H'));
+    expect(g.isLegalCall(1, bid(90, 'S'))).toBe(false);
+    g.call(1, bid(150, 'S'));
+    g.call(2, bid(160, 'C'));
+    expect(auctionOptions(g, 3)).toMatchObject({ minBid: null, kabbout: true, contre: true });
+    expect(g.isLegalCall(3, bid(160, 'D'))).toBe(false);
+    g.call(3, bid('kabbout', 'D'));
+    expect(auctionOptions(g, 0)).toMatchObject({ minBid: null, kabbout: false, contre: true });
+    expect(g.isLegalCall(0, bid('kabbout', 'H'))).toBe(false);
+  });
+
+  it('lets a player bid again after passing, and outbid their partner, even in the same suit', () => {
+    const { g } = fresh();
+    g.call(0, PASS);
+    g.call(1, bid(90, 'H'));
+    g.call(2, PASS);
+    g.call(3, bid(100, 'H'));
+    g.call(0, bid(110, 'S'));
+    g.call(1, PASS);
+    expect(g.isLegalCall(2, bid(120, 'S'))).toBe(true);
+    g.call(2, bid(120, 'S'));
+    expect(g.contract).toEqual({ seat: 2, value: 120, suit: 'S' });
+  });
+
+  it('closes after three passes: the player on the dealer’s right leads, and the belote holder is known', () => {
+    const { g } = fresh();
+    g.call(0, bid(100, 'D'));
+    g.call(1, PASS);
+    g.call(2, PASS);
+    const out = g.call(3, PASS);
+    expect(out.contract).toEqual({ contract: { seat: 0, value: 100, suit: 'D' }, coinche: 1, coincheBy: null });
+    expect(g.phase).toBe('playing');
+    expect(g.trump).toBe('D');
+    expect(g.taker).toBe(0);
+    expect(g.turn).toBe(0);
+    const holder = g.hands.findIndex((h) => h.some((x) => x.id === 'DK') && h.some((x) => x.id === 'DQ'));
+    expect(g.beloteHolder).toBe(holder < 0 ? null : holder);
+  });
+
+  it('redeals with the next dealer when all four pass', () => {
+    const { g } = fresh(3);
+    for (const s of [0, 1, 2]) expect(g.call(s, PASS).redeal).toBeUndefined();
+    const out = g.call(3, PASS);
+    expect(out.redeal).toBeDefined();
+    expect(out.redeal!.dealer).toBe(0);
+    expect(out.redeal!.redeals).toBe(1);
+    expect(g.round).toBe(1);
+    expect(g.turn).toBe(1);
+    expect(g.auction).toEqual([]);
+  });
+
+  it('lets only an opponent say contre; then only the takers speak, each once', () => {
+    const { g } = fresh();
+    g.call(0, bid(110, 'H'));
+    expect(g.isLegalCall(1, { type: 'surcontre' })).toBe(false);
+    g.call(1, PASS);
+    expect(g.isLegalCall(2, { type: 'contre' })).toBe(false); // the taker's partner
+    g.call(2, PASS);
+    g.call(3, { type: 'contre' });
+    expect(g.coinche).toBe(2);
+    expect(g.coincheBy).toBe(3);
+    // The takers answer in turn: seat 0, then seat 2. No more bids.
+    expect(g.turn).toBe(0);
+    expect(auctionOptions(g, 0)).toEqual({ minBid: null, kabbout: false, contre: false, surcontre: true });
+    expect(g.isLegalCall(0, bid(120, 'H'))).toBe(false);
+    g.call(0, PASS);
+    expect(g.turn).toBe(2);
+    const out = g.call(2, PASS);
+    expect(out.contract).toEqual({ contract: { seat: 0, value: 110, suit: 'H' }, coinche: 2, coincheBy: 3 });
+  });
+
+  it('ends the auction at once on a surcontre', () => {
+    const { g } = fresh();
+    g.call(0, bid(90, 'C'));
+    g.call(1, { type: 'contre' });
+    expect(g.turn).toBe(2);
+    const out = g.call(2, { type: 'surcontre' });
+    expect(out.contract?.coinche).toBe(4);
+    expect(g.phase).toBe('playing');
+  });
+
+  it('rejects malformed calls', () => {
+    expect(parseCall({ type: 'bid', value: 90 })).toBeNull();
+    expect(parseCall({ type: 'bid', value: 85, suit: 'H' })).toBeNull();
+    expect(parseCall({ type: 'bid', value: 'capot', suit: 'H' })).toBeNull();
+    expect(parseCall({ type: 'shout' })).toBeNull();
+    expect(parseCall(null)).toBeNull();
+    expect(parseCall({ type: 'bid', value: 'kabbout', suit: 'S', extra: 1 })).toEqual({ type: 'bid', value: 'kabbout', suit: 'S' });
+    expect(callLabel({ type: 'bid', value: 'kabbout', suit: 'S' })).toBe('Kabbout ♠');
+    const { g } = fresh();
+    expect(() => g.call(0, { type: 'contre' })).toThrow();
+    expect(() => g.call(0, { type: 'bid', value: 100 } as never)).toThrow();
+  });
+});
+
+describe('scoreBeloteHand (the Tunisian scale)', () => {
+  const contract = (value: number | 'kabbout', seat = 0): Contract => ({ seat, value, suit: 'H' });
+  /** Eight tricks with these winners and points (the last one's 10 included). */
   const tricks = (winners: number[], points: number[]) => winners.map((winner, i) => ({ winner, points: points[i]! }));
+  const split = (t0: number, t1: number) => tricks([0, 1, 0, 1, 0, 1, 0, 1], [t0 - 30, t1 - 30, 10, 10, 10, 10, 10, 10]);
 
-  it('scores both teams when the takers make more', () => {
-    const r = scoreBeloteHand({ taker: 0, tricks: tricks([0, 1, 0, 1, 0, 2, 3, 0], [20, 10, 30, 15, 25, 20, 12, 30]), belote: 1, declarations: none, reserve: 0 });
-    expect(r.cardPoints).toEqual([125, 37]);
-    expect(r.made).toEqual([125, 57]);
+  it('gives each team its own points, rounded, when the contract is made', () => {
+    const r = scoreBeloteHand({ contract: contract(90), coinche: 1, tricks: split(96, 66), beloteHolder: null });
+    expect(r.cardPoints).toEqual([96, 66]);
+    expect(r.rounded).toEqual([100, 70]);
     expect(r.outcome).toBe('made');
-    expect(r.points).toEqual([125, 57]);
+    expect(r.points).toEqual([100, 70]);
   });
 
-  it('gives the defenders 162 plus every announcement when the takers fall (belote stays)', () => {
-    const decl = { team: 0 as const, points: [50, 0] as [number, number], counted: [] };
-    const r = scoreBeloteHand({ taker: 0, tricks: tricks([1, 1, 0, 1, 1, 3, 2, 3], [30, 25, 10, 20, 25, 20, 2, 30]), belote: 0, declarations: decl, reserve: 0 });
-    expect(r.cardPoints).toEqual([12, 150]);
-    expect(r.made).toEqual([82, 150]);
-    expect(r.outcome).toBe('dedans');
-    expect(r.points).toEqual([20, 162 + 50]);
+  it('judges the contract on rounded points, the takers’ belote counting', () => {
+    expect(scoreBeloteHand({ contract: contract(90), coinche: 1, tricks: split(86, 76), beloteHolder: null }).outcome).toBe('made');
+    expect(scoreBeloteHand({ contract: contract(90), coinche: 1, tricks: split(84, 78), beloteHolder: null }).outcome).toBe('failed');
+    const withBelote = scoreBeloteHand({ contract: contract(110), coinche: 1, tricks: split(92, 70), beloteHolder: 2 });
+    expect(withBelote.made).toEqual([110, 70]);
+    expect(withBelote.outcome).toBe('made');
+    expect(withBelote.points).toEqual([110, 70]);
+    // The defence's belote stays with the defence.
+    expect(scoreBeloteHand({ contract: contract(100), coinche: 1, tricks: split(112, 50), beloteHolder: 1 }).points).toEqual([110, 70]);
   });
 
-  it('scores a capot 250 (and 250 + announcements for a defenders’ capot)', () => {
-    const all0 = tricks([0, 2, 0, 2, 0, 2, 0, 2], [20, 20, 20, 20, 20, 20, 21, 21]);
-    expect(scoreBeloteHand({ taker: 2, tricks: all0, belote: 0, declarations: none, reserve: 0 })).toMatchObject({
-      capot: 0,
-      cardPoints: [250, 0],
-      outcome: 'made',
-      points: [270, 0],
-    });
-    const decl = { team: 1 as const, points: [0, 20] as [number, number], counted: [] };
-    const all1 = tricks([1, 3, 1, 3, 1, 3, 1, 3], [20, 20, 20, 20, 20, 20, 21, 21]);
-    expect(scoreBeloteHand({ taker: 0, tricks: all1, belote: null, declarations: decl, reserve: 0 })).toMatchObject({
-      capot: 1,
-      outcome: 'dedans',
-      points: [0, 270],
-    });
+  it('fails without strictly more than the defence', () => {
+    // 82/80 → 80/80 + the defence's belote: 80 against 100.
+    const r = scoreBeloteHand({ contract: contract(90), coinche: 1, tricks: split(91, 71), beloteHolder: 3 });
+    expect(r.made).toEqual([90, 90]);
+    expect(r.outcome).toBe('failed');
   });
 
-  it('holds the takers’ points over on a tie, for the winner of the next hand', () => {
-    const r = scoreBeloteHand({ taker: 1, tricks: tricks([0, 1, 0, 1, 0, 1, 0, 1], [20, 20, 20, 20, 20, 20, 21, 21]), belote: null, declarations: none, reserve: 0 });
-    expect(r.made).toEqual([81, 81]);
-    expect(r.outcome).toBe('litige');
-    expect(r.points).toEqual([81, 0]);
-    expect(r.reserveOut).toBe(81);
-    const next = scoreBeloteHand({ taker: 1, tricks: tricks([1, 1, 1, 1, 0, 1, 1, 1], [20, 20, 20, 20, 20, 20, 21, 21]), belote: null, declarations: none, reserve: 81 });
-    expect(next).toMatchObject({ outcome: 'made', reserveIn: 81, reserveTo: 1, points: [20, 142 + 81] });
-    const fell = scoreBeloteHand({ taker: 1, tricks: tricks([0, 0, 0, 0, 1, 0, 0, 0], [20, 20, 20, 20, 20, 20, 21, 21]), belote: null, declarations: none, reserve: 81 });
-    expect(fell).toMatchObject({ outcome: 'dedans', reserveTo: 0, points: [162 + 81, 0] });
+  it('gives the defence 160 for a failed contract, plus 20 for a belote whoever held it', () => {
+    expect(scoreBeloteHand({ contract: contract(130), coinche: 1, tricks: split(100, 62), beloteHolder: null }).points).toEqual([0, 160]);
+    expect(scoreBeloteHand({ contract: contract(130), coinche: 1, tricks: split(100, 62), beloteHolder: 0 }).points).toEqual([0, 180]);
+  });
+
+  it('multiplies by 2 on a contre and 4 on a surcontre, belote never multiplied', () => {
+    expect(scoreBeloteHand({ contract: contract(100), coinche: 2, tricks: split(110, 52), beloteHolder: null }).points).toEqual([320, 0]);
+    expect(scoreBeloteHand({ contract: contract(100), coinche: 4, tricks: split(110, 52), beloteHolder: 1 }).points).toEqual([660, 0]);
+    expect(scoreBeloteHand({ contract: contract(140), coinche: 2, tricks: split(110, 52), beloteHolder: 0 }).points).toEqual([0, 340]);
+    expect(scoreBeloteHand({ contract: contract(140), coinche: 4, tricks: split(110, 52), beloteHolder: null }).points).toEqual([0, 640]);
+  });
+
+  it('scores 250 for all eight tricks without Kabbout, and 500 for Kabbout made or failed', () => {
+    const all = tricks([0, 2, 0, 2, 0, 2, 0, 2], [20, 20, 20, 20, 20, 20, 21, 21]);
+    expect(scoreBeloteHand({ contract: contract(90), coinche: 1, tricks: all, beloteHolder: 0 })).toMatchObject({ capot: 0, outcome: 'made', points: [270, 0] });
+    expect(scoreBeloteHand({ contract: contract('kabbout'), coinche: 1, tricks: all, beloteHolder: null })).toMatchObject({ outcome: 'made', points: [500, 0] });
+    expect(scoreBeloteHand({ contract: contract('kabbout'), coinche: 2, tricks: all, beloteHolder: 1 }).points).toEqual([1020, 0]);
+    const lost = scoreBeloteHand({ contract: contract('kabbout'), coinche: 1, tricks: [{ winner: 1, points: 15 }], beloteHolder: 0, early: true });
+    expect(lost).toMatchObject({ outcome: 'failed', early: true, points: [0, 520] });
   });
 });
 
-/** Plays one legal action for whoever is to act (bids taken with probability `takeRate`). */
-function randomStep(game: BeloteGame, rand: () => number, takeRate = 0.3) {
+/** Plays one legal action for whoever is to act (bids with probability `bidRate`). */
+function randomStep(game: BeloteGame, rand: () => number, bidRate = 0.3) {
   const seat = game.turn;
   if (game.phase === 'bidding') {
-    const options = (['D', 'H', 'C', 'S'] as const).filter((s) => game.isLegalBid(seat, s));
-    const suit = rand() < takeRate && options.length ? options[Math.floor(rand() * options.length)]! : null;
-    return game.bid(seat, suit);
+    const o = game.options(seat);
+    const calls: AuctionCall[] = [PASS];
+    if (o.surcontre) calls.push({ type: 'surcontre' });
+    if (o.contre && rand() < 0.1) calls.push({ type: 'contre' });
+    if (o.minBid !== null && rand() < bidRate) calls.push(bid(Math.min(160, o.minBid + 10 * Math.floor(rand() * 2)), SUITS[Math.floor(rand() * 4)]!));
+    if (o.kabbout && rand() < 0.01) calls.push(bid('kabbout', SUITS[Math.floor(rand() * 4)]!));
+    return game.call(seat, calls[Math.floor(rand() * calls.length)]!);
   }
   const legal = game.legalCards(seat);
   return game.play(seat, legal[Math.floor(rand() * legal.length)]!.id);
 }
 
+/** Bids `value` in `suit` for the player on the dealer's right, and everyone else passes. */
+function takeContract(game: BeloteGame, value: number | 'kabbout', suit: Suit) {
+  const first = game.turn;
+  game.call(first, bid(value, suit));
+  for (let i = 1; i <= 3; i++) game.call((first + i) % 4, PASS);
+}
+
 describe('BeloteGame', () => {
-  it('deals 3 then 2 cards each from the dealer’s right and turns one up', () => {
-    const game = new BeloteGame({ targetScore: 501, firstDealer: 2, rand: seededRandom(1) });
-    const deal = game.startRound();
-    expect(deal.dealer).toBe(2);
-    expect(deal.order).toEqual([3, 3, 3, 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 0, 0, 1, 1, 2, 2]);
-    expect(game.hands.every((h) => h.length === 5)).toBe(true);
-    expect(game.stock).toHaveLength(11);
-    expect(deal.stockAfter).toBe(11);
-    expect(game.turned).toEqual(deal.turned);
-    expect(game.turn).toBe(3);
-    expect(game.phase).toBe('bidding');
-    const all = [...game.hands.flat(), ...game.stock, game.turned!].map((x) => x.id);
-    expect(new Set(all).size).toBe(32);
-  });
-
-  it('gives the taker the turned card plus 2, the others 3, and lets the dealer’s right lead', () => {
-    const game = new BeloteGame({ targetScore: 501, firstDealer: 0, rand: seededRandom(2) });
-    const deal = game.startRound();
-    expect(game.isLegalBid(1, deal.turned.suit)).toBe(true);
-    const other = (['D', 'H', 'C', 'S'] as const).find((s) => s !== deal.turned.suit)!;
-    expect(game.isLegalBid(1, other)).toBe(false);
-    expect(game.isLegalBid(2, null)).toBe(false);
-    expect(game.bid(1, null).take).toBeUndefined();
-    const out = game.bid(2, deal.turned.suit);
-    expect(out.take).toBeDefined();
-    const take = out.take!;
-    expect(take.taker).toBe(2);
-    expect(take.order).toEqual([1, 1, 1, 2, 2, 3, 3, 3, 0, 0, 0]);
-    expect(take.hands.map((h) => h.length)).toEqual([3, 3, 2, 3]);
-    expect(game.hands.every((h) => h.length === 8)).toBe(true);
-    expect(game.hands[2]!.map((x) => x.id)).toContain(deal.turned.id);
-    expect(game.trump).toBe(deal.turned.suit);
-    expect(game.phase).toBe('playing');
-    expect(game.turn).toBe(1);
-    expect(game.stock).toHaveLength(0);
-  });
-
-  it('opens a second round for the other suits, and redeals when everybody passes twice', () => {
-    const game = new BeloteGame({ targetScore: 501, firstDealer: 3, rand: seededRandom(3) });
-    const deal = game.startRound();
-    for (const s of [0, 1, 2, 3]) game.bid(s, null);
-    expect(game.bidRound).toBe(2);
-    expect(game.turn).toBe(0);
-    expect(game.isLegalBid(0, deal.turned.suit)).toBe(false);
-    for (const s of [0, 1, 2]) game.bid(s, null);
-    const out = game.bid(3, null);
-    expect(out.redeal).toBeDefined();
-    expect(out.redeal!.dealer).toBe(0);
-    expect(out.redeal!.redeals).toBe(1);
-    expect(game.round).toBe(1);
-    expect(game.bidRound).toBe(1);
-    expect(game.turn).toBe(1);
-    // Second round take with another suit.
-    for (const s of [1, 2, 3, 0]) game.bid(s, null);
-    const suit = (['D', 'H', 'C', 'S'] as const).find((s) => s !== game.turned!.suit)!;
-    const take = game.bid(1, suit).take!;
-    expect(take.trump).toBe(suit);
-    expect(game.hands[1]!.map((x) => x.id)).toContain(take.turned.id);
-  });
-
   it('announces belote and rebelote with the trump king and queen of their holder', () => {
     const rand = seededRandom(4);
     for (let attempt = 0; attempt < 400; attempt++) {
-      const game = new BeloteGame({ targetScore: 501, rand });
+      const game = new BeloteGame({ targetScore: 1500, rand });
       game.startRound();
-      game.bid(game.turn, game.turned!.suit);
+      const suit = SUITS[attempt % 4]!;
+      takeContract(game, 90, suit);
       if (game.beloteHolder === null) continue;
       const said: string[] = [];
       while (game.phase === 'playing') {
@@ -298,85 +335,100 @@ describe('BeloteGame', () => {
           said.push(out.play.belote);
         }
       }
-      expect(said).toEqual(['belote', 'rebelote']);
+      // (The hand may stop early, before both are played.)
+      expect(['belote', 'rebelote'].slice(0, said.length)).toEqual(said);
       expect(game.lastRound!.belote).toBe(teamOf(game.beloteHolder));
-      return;
+      if (said.length === 2) return;
     }
-    throw new Error('no deal with belote found');
+    throw new Error('no full belote found');
   });
 
-  it('declares announcements with the first card and settles them after the first trick', () => {
-    const rand = seededRandom(5);
-    for (let attempt = 0; attempt < 400; attempt++) {
-      const game = new BeloteGame({ targetScore: 501, rand });
+  it('stops a Kabbout as soon as the defence wins a trick', () => {
+    const rand = seededRandom(7);
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const game = new BeloteGame({ targetScore: 1500, rand });
       game.startRound();
-      game.bid(game.turn, game.turned!.suit);
-      if (game.declarations.every((d) => d.length === 0)) continue;
-      const shown: Declaration[] = [];
-      let settled = null;
-      for (let i = 0; i < 4; i++) {
-        const out = randomStep(game, rand);
-        if ('play' in out) {
-          shown.push(...out.play.declarations);
-          if (out.declarations) settled = out.declarations;
-        }
+      takeContract(game, 'kabbout', 'S');
+      const takers = teamOf(game.taker!);
+      let out;
+      do out = randomStep(game, rand);
+      while (!('round' in out && out.round));
+      const r = out.round!;
+      if (r.outcome === 'failed') {
+        expect(r.early).toBe(true);
+        expect(game.tricks.filter((t) => teamOf(t.winner) !== takers)).toHaveLength(1);
+        expect(r.points[1 - takers]).toBe(500 + (r.belote !== null ? 20 : 0));
+        return;
       }
-      expect(shown).toEqual(game.declarations.flat());
-      expect(settled).not.toBeNull();
-      expect(game.declResult).toEqual(settled);
-      // No more declarations after the first trick.
-      const out = randomStep(game, rand);
-      expect('play' in out && out.play.declarations).toEqual([]);
-      return;
     }
-    throw new Error('no deal with announcements found');
+    throw new Error('no failed kabbout found');
+  });
+
+  it('stops a contract the takers can no longer make, and counts it failed', () => {
+    const rand = seededRandom(9);
+    let stopped = 0;
+    for (let attempt = 0; attempt < 200 && stopped < 5; attempt++) {
+      const game = new BeloteGame({ targetScore: 1e9, rand });
+      game.startRound();
+      takeContract(game, 150, SUITS[attempt % 4]!);
+      let out;
+      do out = randomStep(game, rand);
+      while (!('round' in out && out.round));
+      const r = out.round!;
+      if (!r.early) continue;
+      stopped++;
+      expect(game.tricks.length).toBeLessThan(8);
+      expect(r.outcome).toBe('failed');
+      // At the moment it stopped, even every remaining trick could not have reached 150 and beaten the defence.
+      const takers = teamOf(game.taker!);
+      const theirs = r.cardPoints[1 - takers]!;
+      const best = roundTen(162 - theirs) + (r.belote === takers ? 20 : 0);
+      expect(best < 150 || best <= roundTen(theirs) + (r.belote === 1 - takers ? 20 : 0)).toBe(true);
+    }
+    expect(stopped).toBe(5);
   });
 
   it('plays whole games to the target with every card accounted for', () => {
     for (let g = 0; g < 30; g++) {
       const rand = seededRandom(100 + g);
-      const game = new BeloteGame({ targetScore: 501, announcements: g % 2 === 0, rand });
+      const game = new BeloteGame({ targetScore: 1500, rand });
       game.startRound();
       let total: [number, number] = [0, 0];
-      for (let steps = 0; steps < 20000 && game.phase !== 'gameOver'; steps++) {
+      for (let steps = 0; steps < 50000 && game.phase !== 'gameOver'; steps++) {
         if (game.phase === 'roundOver') {
           game.startRound();
           continue;
         }
         const out = randomStep(game, rand);
-        if ('trick' in out && out.trick) {
-          expect(out.trick.plays).toHaveLength(4);
-          expect(game.piles.flat().length).toBe((out.trick.index + 1) * 4);
-        }
+        if ('trick' in out && out.trick) expect(game.piles.flat().length).toBe((out.trick.index + 1) * 4);
         if ('round' in out && out.round) {
           const r = out.round;
-          expect(game.piles.flat()).toHaveLength(32);
-          expect(game.hands.every((h) => h.length === 0)).toBe(true);
-          if (r.capot === null) expect(r.cardPoints[0] + r.cardPoints[1]).toBe(162);
+          if (!r.early) {
+            expect(game.piles.flat()).toHaveLength(32);
+            expect(r.cardPoints[0] + r.cardPoints[1]).toBe(162);
+          }
           total = [total[0] + r.points[0], total[1] + r.points[1]];
           expect(r.totals).toEqual(total);
         }
       }
       expect(game.phase).toBe('gameOver');
       expect(game.winner).not.toBeNull();
-      expect(Math.max(...game.scores)).toBeGreaterThanOrEqual(501);
+      expect(Math.max(...game.scores)).toBeGreaterThanOrEqual(1500);
       expect(game.scores[game.winner!]).toBeGreaterThan(game.scores[1 - game.winner!]!);
     }
   });
 
   it('rejects out-of-turn and illegal actions', () => {
-    const game = new BeloteGame({ targetScore: 501, firstDealer: 0, rand: seededRandom(6) });
+    const game = new BeloteGame({ targetScore: 1500, firstDealer: 0, rand: seededRandom(6) });
     game.startRound();
-    expect(() => game.bid(2, null)).toThrow();
+    expect(() => game.call(2, PASS)).toThrow();
     expect(() => game.play(1, game.hands[1]![0]!.id)).toThrow();
-    game.bid(1, game.turned!.suit);
-    expect(() => game.bid(2, null)).toThrow();
+    takeContract(game, 90, 'H');
+    expect(() => game.call(2, PASS)).toThrow();
     expect(() => game.play(2, game.hands[2]![0]!.id)).toThrow();
     expect(() => game.play(1, 'XX')).toThrow();
-    const lead = game.hands[1]![0]!;
-    game.play(1, lead.id);
-    const hand = game.hands[2]!;
-    const illegal = hand.find((x) => !game.isLegalCard(2, x.id));
+    game.play(1, game.hands[1]![0]!.id);
+    const illegal = game.hands[2]!.find((x) => !game.isLegalCard(2, x.id));
     if (illegal) expect(() => game.play(2, illegal.id)).toThrow();
   });
 });

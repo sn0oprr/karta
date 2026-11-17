@@ -2,15 +2,7 @@
  * Client ⇄ server contract (Socket.IO events and payloads).
  */
 import type { Card, Suit } from './cards';
-import type {
-  BCard,
-  BeloteRoundResult,
-  BidInfo,
-  BeloteTrickInfo,
-  DeclarationsResult,
-  PublicDeclaration,
-  TrickPlay,
-} from './belote';
+import type { AuctionAction, AuctionCall, BCard, BeloteRoundResult, BeloteTrickInfo, Coinche, Contract, TrickPlay } from './belote';
 import { BELOTE_TARGETS } from './belote';
 import type { PlayInfo, RoundResult } from './chkobba';
 import type { Team } from './teams';
@@ -34,7 +26,7 @@ export interface GameInfo {
 
 export const GAME_INFO: Readonly<Record<GameKind, GameInfo>> = {
   chkobba: { name: 'Chkobba', arabic: 'شكبّة', modes: ['1v1', '2v2'], targets: TARGET_SCORES, defaultTarget: 21 },
-  belote: { name: 'Belote', arabic: 'بلوت', modes: ['2v2'], targets: BELOTE_TARGETS, defaultTarget: 501 },
+  belote: { name: 'Belote', arabic: 'بلوت', modes: ['2v2'], targets: BELOTE_TARGETS, defaultTarget: 1500 },
 };
 
 export function isGameKind(v: unknown): v is GameKind {
@@ -55,8 +47,6 @@ export interface RoomSettings {
   /** Seconds per turn; 0 = unlimited. When time runs out the move is played automatically. */
   turnSeconds: TurnTimer;
   botLevel: BotLevelSetting;
-  /** Belote: tierces, cinquantes, cents and carrés count. */
-  announcements: boolean;
 }
 
 export const DEFAULT_SETTINGS: RoomSettings = {
@@ -65,7 +55,6 @@ export const DEFAULT_SETTINGS: RoomSettings = {
   targetScore: 21,
   turnSeconds: 0,
   botLevel: 'normal',
-  announcements: true,
 };
 
 export function seatCount(mode: GameMode): 2 | 4 {
@@ -211,15 +200,16 @@ export interface ChkobbaView extends GameViewBase {
 
 export interface BeloteView extends GameViewBase {
   kind: 'belote';
-  /** Bidding while the turned card is up, then playing tricks; done once the last trick is in. */
+  /** The auction, then the tricks; done once the hand is over (after the last trick, or earlier). */
   stage: 'bidding' | 'playing' | 'done';
-  bidRound: 1 | 2;
-  /** The card turned up for the bidding; once taken, the taker holds it until they play it. */
-  upCard: BCard | null;
-  /** Face-down cards left to deal (11 during the bidding). */
-  stockCount: number;
-  /** Bids of the current deal. */
-  bids: BidInfo[];
+  /** Calls of the current deal, in order. */
+  auction: AuctionAction[];
+  /** The best bid so far; once the auction is over, the contract. */
+  contract: Contract | null;
+  /** 1, ×2 after a contre, ×4 after a surcontre. */
+  coinche: Coinche;
+  /** Who said "contre". */
+  coincheBy: number | null;
   trump: Suit | null;
   taker: number | null;
   /** The viewer's own hand (null for spectators). */
@@ -232,13 +222,6 @@ export interface BeloteView extends GameViewBase {
   tricksWon: number[];
   /** Who said "Belote", and how many of the King and Queen of trumps they have played. */
   belote: { seat: number; stage: number } | null;
-  /** Announcements made so far this hand. */
-  declared: PublicDeclaration[];
-  /** After the first trick: whose announcements count (their cards are shown). */
-  declResult: DeclarationsResult | null;
-  /** Points of a litige waiting for the winner of a hand. */
-  reserve: number;
-  announcements: boolean;
   lastRound: BeloteRoundResult | null;
 }
 
@@ -290,34 +273,31 @@ export interface GameStartEvent {
   kind: 'gameStart';
 }
 
-/** Belote: 5 cards each and one turned up (also after everybody passed twice: `redeals` > 0). */
+/** Belote: 8 cards each, in two lots of 4 (also after everybody passed: `redeals` > 0). */
 export interface BeloteDealEvent {
   kind: 'beloteDeal';
   round: number;
   dealer: number;
+  /** Who receives each dealt card, in order. */
   order: number[];
   /** Viewer's cards (null for spectators). */
   myCards: BCard[] | null;
-  turned: BCard;
-  stockAfter: number;
   redeals: number;
 }
 
+/** Belote: a call in the auction (a bid, pass, contre or surcontre). */
 export interface BeloteBidEvent {
   kind: 'beloteBid';
-  bid: BidInfo;
+  action: AuctionAction;
   auto: boolean;
 }
 
-/** Belote: someone took; the taker picks up the turned card and the rest is dealt. */
-export interface BeloteTakeEvent {
-  kind: 'beloteTake';
-  taker: number;
-  trump: Suit;
-  turned: BCard;
-  order: number[];
-  /** Viewer's new cards, the turned card not included (null for spectators). */
-  myCards: BCard[] | null;
+/** Belote: the auction is over; the play starts. */
+export interface BeloteContractEvent {
+  kind: 'beloteContract';
+  contract: Contract;
+  coinche: Coinche;
+  coincheBy: number | null;
 }
 
 export interface BelotePlayEvent {
@@ -325,16 +305,12 @@ export interface BelotePlayEvent {
   seat: number;
   card: BCard;
   belote: 'belote' | 'rebelote' | null;
-  /** Announcements made with this card. */
-  declared: PublicDeclaration[];
   auto: boolean;
 }
 
 export interface BeloteTrickEvent {
   kind: 'beloteTrick';
   trick: BeloteTrickInfo;
-  /** After the first trick: whose announcements count. */
-  declResult: DeclarationsResult | null;
 }
 
 export interface BeloteEndEvent {
@@ -349,7 +325,7 @@ export type GameEvent =
   | GameStartEvent
   | BeloteDealEvent
   | BeloteBidEvent
-  | BeloteTakeEvent
+  | BeloteContractEvent
   | BelotePlayEvent
   | BeloteTrickEvent
   | BeloteEndEvent;
@@ -414,8 +390,8 @@ export interface ClientToServer {
   start: (ack: Ack) => void;
   /** Plays a card (Chkobba: with the table cards it captures). */
   play: (move: PlayRequest, ack: Ack) => void;
-  /** Belote: take with a trump suit, or pass (null). */
-  bid: (p: { suit: Suit | null }, ack: Ack) => void;
+  /** Belote: a call in the auction. */
+  bid: (p: AuctionCall, ack: Ack) => void;
   continue: () => void;
   rematch: (ack: Ack) => void;
   toLobby: (ack: Ack) => void;

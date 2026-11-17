@@ -5,10 +5,10 @@ import * as THREE from 'three';
 import { type Card, type Suit, parseCard } from '../../shared/cards';
 import { captureOptions } from '../../shared/chkobba';
 import {
+  type AuctionAction,
   type BeloteRoundResult,
-  type BidInfo,
-  type DeclarationsResult,
-  type PublicDeclaration,
+  type Coinche,
+  type Contract,
   illegalReason,
   legalCards,
   parseBeloteCard,
@@ -16,9 +16,9 @@ import {
 } from '../../shared/belote';
 import {
   AVATAR_COLORS,
+  type BeloteContractEvent,
   type BeloteDealEvent,
   type BelotePlayEvent,
-  type BeloteTakeEvent,
   type BeloteTrickEvent,
   type BeloteView,
   type CharacterId,
@@ -72,15 +72,13 @@ export interface BoardCallbacks {
   onSip: () => void;
   /** Plays one sip of `drink` (pan −1…1); resolves with its length in seconds once it starts. */
   drinkSound: (drink: DrinkId, pan: number) => Promise<number>;
-  /** Belote: a player took or passed. */
-  onBid: (seat: number, bid: BidInfo) => void;
+  /** Belote: a call in the auction (bid, pass, contre or surcontre). */
+  onBid: (action: AuctionAction) => void;
+  /** Belote: the auction is over. */
+  onContract: (contract: Contract, coinche: Coinche) => void;
   /** Belote: "Belote!" or "Rebelote!" with the King or Queen of trumps. */
   onBelote: (seat: number, word: 'belote' | 'rebelote') => void;
-  /** Belote: announcements made with a player's first card. */
-  onDeclare: (seat: number, declared: PublicDeclaration[]) => void;
-  /** Belote: after the first trick, whose announcements count. */
-  onDeclResult: (result: DeclarationsResult) => void;
-  /** Belote: everybody passed twice; the cards are dealt again. */
+  /** Belote: everybody passed; the cards are dealt again. */
   onRedeal: () => void;
   /** Belote: the last trick is in (the results follow). */
   onBeloteEnd: (result: BeloteRoundResult) => void;
@@ -123,7 +121,7 @@ const CHKOBBA_AREA: Pt3[] = (() => {
   ];
 })();
 
-/** Where Belote's cards lie on the table: the trick and the turned card in the middle. */
+/** Where Belote's cards lie on the table: the trick in the middle. */
 const BELOTE_AREA: Pt3[] = [
   { x: -BELOTE_CARD_EXTENT.x, y: 0, z: -BELOTE_CARD_EXTENT.z },
   { x: BELOTE_CARD_EXTENT.x, y: 0, z: -BELOTE_CARD_EXTENT.z },
@@ -131,10 +129,9 @@ const BELOTE_AREA: Pt3[] = [
   { x: -BELOTE_CARD_EXTENT.x, y: 0, z: BELOTE_CARD_EXTENT.z },
 ];
 
-/** The turned card lies a little bigger than the others, in the middle of the table. */
-const UP_SCALE = 1.12;
-/** Belote: delay between two cards of a deal (ms). */
-const DEAL_STEP = 95;
+/** Belote deals 4 cards at a time: delay between two lots, and between the cards of a lot (ms). */
+const LOT_STEP = 230;
+const LOT_CARD_STEP = 35;
 
 /** A ball around a seated avatar's head (ears, hair and hats included; buns and curls stick out back). */
 function headBall(view: number, n: number): Ball {
@@ -176,8 +173,6 @@ export class Board {
   // ── belote ──
   /** The trick in progress, in play order. */
   private trickObjs: { seat: number; obj: CardObject }[] = [];
-  /** The card turned up for the bidding. */
-  private upObj: CardObject | null = null;
   private trumpToken = new TrumpToken();
   private confetti: Confetti;
   private shockwave: Shockwave;
@@ -906,13 +901,15 @@ export class Board {
       case 'beloteDeal':
         await this.animateBeloteDeal(ev);
         break;
-      case 'beloteBid':
-        this.cb.onBid(ev.bid.seat, ev.bid);
-        if (ev.bid.suit) this.avatars[ev.bid.seat]?.nod();
-        await wait(ev.bid.suit ? 420 : 220);
+      case 'beloteBid': {
+        const pass = ev.action.call.type === 'pass';
+        this.cb.onBid(ev.action);
+        if (!pass) this.avatars[ev.action.seat]?.nod();
+        await wait(pass ? 220 : 420);
         break;
-      case 'beloteTake':
-        await this.animateBeloteTake(ev);
+      }
+      case 'beloteContract':
+        await this.animateBeloteContract(ev);
         break;
       case 'belotePlay':
         await this.animateBelotePlay(ev);
@@ -935,12 +932,10 @@ export class Board {
   private async gatherEverything(to: THREE.Vector3, hands = false) {
     const flying: Promise<void>[] = [];
     const all: CardObject[] = [...this.tableCards.values(), ...this.markers.flat(), ...this.trickObjs.map((t) => t.obj)];
-    if (this.upObj) all.push(this.upObj);
     this.tableCards.clear();
     this.slotOf.clear();
     this.markers = Array.from({ length: this.n }, () => []);
     this.trickObjs = [];
-    this.upObj = null;
     this.trumpToken.setSuit(null);
     if (hands) {
       for (const c of this.myHand) {
@@ -1279,8 +1274,6 @@ export class Board {
   private clearBeloteTable() {
     for (const t of this.trickObjs) this.release(t.obj);
     this.trickObjs = [];
-    if (this.upObj) this.release(this.upObj);
-    this.upObj = null;
     this.trumpToken.setSuit(null);
   }
 
@@ -1322,43 +1315,20 @@ export class Board {
     });
     this.trickObjs.sort((a, b) => ids.indexOf(a.obj.cardId!) - ids.indexOf(b.obj.cardId!));
 
-    // The card turned up, while the bidding lasts.
-    const up = g.stage === 'bidding' ? g.upCard : null;
-    if (this.upObj && this.upObj.cardId !== up?.id) {
-      this.release(this.upObj);
-      this.upObj = null;
-    }
-    if (up) {
-      if (!this.upObj) {
-        this.upObj = this.take(up.id);
-        this.upObj.role = 'up';
-        this.group.add(this.upObj.root);
-      }
-      const t = this.upTransform();
-      this.upObj.root.position.copy(t.pos);
-      this.upObj.root.quaternion.copy(t.quat);
-      this.upObj.root.scale.setScalar(UP_SCALE);
-      this.upObj.setGlow(0.8, '#ffd84d');
-    }
-
-    // Won tricks, the stock (during the bidding) and the trump token.
+    // Won tricks and the trump token; every card is dealt, so there is no stock.
     for (let s = 0; s < this.n; s++) {
       this.piles[s]!.setCount(g.pileCounts[s] ?? 0);
       this.piles[s]!.root.position.y = 0;
     }
     this.deck.root.position.copy(deckPosition(this.viewOf(g.dealer), this.n));
     this.deck.root.rotation.y = DECK_YAW;
-    this.deck.setCount(g.stockCount);
+    this.deck.setCount(0);
     this.placeTrumpToken(g.trump, g.taker);
   }
 
   private trickTransform(seat: number, order: number) {
     const s = trickSlot(this.viewOf(seat), this.n);
     return { pos: s.pos.clone().setY(CARD_T / 2 + 0.018 + order * 0.006), quat: flatQuat(s.yaw, true) };
-  }
-
-  private upTransform() {
-    return { pos: new THREE.Vector3(0, CARD_T / 2 + 0.03, 0), quat: flatQuat(-0.12, true) };
   }
 
   private placeTrumpToken(trump: Suit | null, taker: number | null) {
@@ -1385,8 +1355,8 @@ export class Board {
   }
 
   /**
-   * Deals cards from the deck at `deckPos` to the seats in `order`, one after the other; the local player's
-   * (`mine`, in order) turn face up as they reach the hand, laid out for `handSize` cards.
+   * Deals cards from the deck at `deckPos` to the seats in `order`, 4 at a time; the local player's (`mine`,
+   * in order) turn face up as they reach the hand, laid out for `handSize` cards.
    */
   private async dealCards(deckPos: THREE.Vector3, order: number[], mine: string[], handSize: number) {
     let remaining = this.deck.count;
@@ -1395,7 +1365,7 @@ export class Board {
       const isMe = seat === this.mySeat;
       const id = isMe ? (queue.shift() ?? null) : null;
       return (async () => {
-        await wait(i * DEAL_STEP);
+        await wait(Math.floor(i / 4) * LOT_STEP + (i % 4) * LOT_CARD_STEP);
         remaining -= 1;
         this.deck.setCount(Math.max(0, remaining));
         const c = this.take(null);
@@ -1444,89 +1414,33 @@ export class Board {
     for (let s = 0; s < this.n; s++) this.layoutHeld(s, true);
   }
 
-  /** 5 cards each (3 then 2), and the next one turned up in the middle of the table. */
+  /** 8 cards each, in two lots of 4. */
   private async animateBeloteDeal(ev: BeloteDealEvent) {
     const deckPos = deckPosition(this.viewOf(ev.dealer), this.n);
-    // Everything goes back to the deck first: the last hand's tricks, or after a redeal everybody's cards.
+    // Everything goes back to the deck first: the last hand's tricks (and cards still held, when a hand
+    // stopped early), or after a redeal everybody's cards.
     await this.gatherEverything(deckPos, true);
     if (ev.redeals > 0) this.cb.onRedeal();
     this.deck.root.position.copy(deckPos);
     this.deck.root.rotation.y = DECK_YAW;
-    this.deck.setCount(ev.order.length + 1 + ev.stockAfter);
-    await this.dealCards(deckPos, ev.order, (ev.myCards ?? []).map((c) => c.id), 5);
-
-    const up = this.take(ev.turned.id);
-    up.role = 'up';
-    up.root.position.copy(deckPos).setY(this.deck.topY + 0.02);
-    up.root.quaternion.copy(flatQuat(DECK_YAW, false));
-    this.group.add(up.root);
-    this.upObj = up;
-    this.deck.setCount(ev.stockAfter);
-    this.cb.sfx('flip');
-    const t = this.upTransform();
-    await moveObject(up.root, { position: t.pos, quaternion: t.quat, via: standQuat(0, 0.35), scale: UP_SCALE, duration: 520, arc: 1.5, ease: ease.outCubic });
-    up.setGlow(0.8, '#ffd84d');
+    this.deck.setCount(ev.order.length);
+    await this.dealCards(deckPos, ev.order, (ev.myCards ?? []).map((c) => c.id), 8);
+    this.deck.setCount(0);
     await this.sortHand(null);
   }
 
-  /** The taker picks up the turned card, the trump token comes out, and the rest of the cards are dealt. */
-  private async animateBeloteTake(ev: BeloteTakeEvent) {
-    const g = this.room?.game;
-    const dealer = g?.kind === 'belote' ? g.dealer : 0;
-    const deckPos = deckPosition(this.viewOf(dealer), this.n);
-    let up = this.upObj;
-    this.upObj = null;
-    if (!up) {
-      up = this.take(ev.turned.id);
-      const t = this.upTransform();
-      up.root.position.copy(t.pos);
-      up.root.quaternion.copy(t.quat);
-      this.group.add(up.root);
-    }
-    up.setGlow(0);
-    this.cb.sfx('select');
-    if (ev.taker === this.mySeat) {
-      up.role = 'hand';
-      up.setShadows(false);
-      this.myHand.push(up);
-      const t = this.handTransform(this.myHand.length - 1, Math.max(6, this.myHand.length));
-      const world = t.pos.clone();
-      this.handGroup.updateMatrixWorld(true);
-      this.handGroup.localToWorld(world);
-      const qWorld = new THREE.Quaternion().setFromEuler(t.rot);
-      this.stage.camera.getWorldQuaternion(tmpQ);
-      qWorld.premultiply(tmpQ);
-      await moveObject(up.root, { position: world, quaternion: qWorld, scale: t.scale, duration: 480, arc: 1.2, ease: ease.inOutCubic });
-      this.handGroup.attach(up.root);
-    } else {
-      const av = this.avatars[ev.taker];
-      if (av) {
-        const list = this.held[ev.taker] ?? (this.held[ev.taker] = []);
-        const tmp = { pos: new THREE.Vector3(), rot: new THREE.Euler() };
-        heldCardTransform(list.length, Math.max(6, list.length + 1), tmp);
-        av.handAnchor.updateMatrixWorld(true);
-        const world = av.handAnchor.localToWorld(tmp.pos.clone());
-        const q = new THREE.Quaternion().setFromEuler(tmp.rot);
-        av.handAnchor.getWorldQuaternion(tmpQ);
-        q.premultiply(tmpQ);
-        await moveObject(up.root, { position: world, quaternion: q, scale: HELD_SCALE, duration: 480, arc: 1.2, ease: ease.inOutCubic });
-        up.setFace(null);
-        up.role = 'held';
-        av.handAnchor.attach(up.root);
-        list.push(up);
-        this.layoutHeld(ev.taker, true);
-      } else this.release(up);
-    }
-
-    // The trump token pops up in front of the taker.
-    this.placeTrumpToken(ev.trump, ev.taker);
+  /** The auction is over: the trump token pops up in front of the taker, and the hand is sorted trumps first. */
+  private async animateBeloteContract(ev: BeloteContractEvent) {
+    const { contract } = ev;
+    this.cb.onContract(contract, ev.coinche);
+    this.placeTrumpToken(contract.suit, contract.seat);
     const token = this.trumpToken.root;
     token.scale.setScalar(0.01);
+    this.cb.sfx('select');
     void animator.run({ duration: 420, ease: ease.outBack, owner: token, update: (k) => token.scale.setScalar(Math.max(0.01, k)) });
-    this.avatars[ev.taker]?.nod();
-
-    await this.dealCards(deckPos, ev.order, (ev.myCards ?? []).map((c) => c.id), 8);
-    await this.sortHand(ev.trump);
+    this.avatars[contract.seat]?.nod();
+    await wait(320);
+    await this.sortHand(contract.suit);
   }
 
   private async animateBelotePlay(ev: BelotePlayEvent) {
@@ -1536,7 +1450,6 @@ export class Board {
     c.setDim(false);
     const order = this.trickObjs.length;
     this.trickObjs.push({ seat: ev.seat, obj: c });
-    if (ev.declared.length) this.cb.onDeclare(ev.seat, ev.declared);
     const t = this.trickTransform(ev.seat, order);
     this.cb.sfx('flip');
     await moveObject(c.root, {
@@ -1568,7 +1481,6 @@ export class Board {
     this.cb.sfx('capture');
     this.avatars[trick.winner]?.nod();
     await wait(480);
-    if (ev.declResult && ev.declResult.team !== null) this.cb.onDeclResult(ev.declResult);
 
     const v = this.viewOf(trick.winner);
     const pile = this.piles[trick.winner]!;
@@ -1593,19 +1505,22 @@ export class Board {
         });
       }),
     );
-    if (ev.declResult?.team != null) await wait(500);
   }
 
   private async animateBeloteEnd(result: BeloteRoundResult) {
     this.cb.onBeloteEnd(result);
-    if (result.capot !== null) {
+    const takers = result.contract.seat % 2;
+    if (result.outcome === 'made' && result.capot === takers) {
+      // Capot, or a Kabbout made.
       this.cb.sfx('chkobba');
       this.stage.shake(0.3);
       this.confetti.burst(new THREE.Vector3(0, 1, 0), 220, 1);
-      for (let s = 0; s < this.n; s++) if (s % 2 === result.capot) this.avatars[s]?.celebrate();
+      for (let s = 0; s < this.n; s++) if (s % 2 === takers) this.avatars[s]?.celebrate();
       await wait(1500);
-    } else if (result.outcome !== 'made') await wait(1300);
-    else await wait(350);
+    } else if (result.outcome !== 'made') {
+      for (let s = 0; s < this.n; s++) if (s % 2 !== takers) this.avatars[s]?.nod();
+      await wait(1300);
+    } else await wait(350);
   }
 
   // ═══════════════════════════════ camera ═══════════════════════════════
@@ -1754,7 +1669,7 @@ export class Board {
     );
   }
 
-  /** Belote: is it the local player's turn to take or pass (and the table done animating)? */
+  /** Belote: is it the local player's turn to speak in the auction (and the table done animating)? */
   get bidReady(): boolean {
     const r = this.room;
     const g = r?.game;
@@ -1867,7 +1782,7 @@ export class Board {
     if (!this.canAct()) {
       const g = this.room?.game;
       if (this.room?.phase === 'playing' && this.mySeat !== null && !this.isAnimating) {
-        if (g?.kind === 'belote' && g.stage === 'bidding') this.cb.onInvalid(g.turn === this.mySeat ? 'Take or pass first' : 'The bidding is on');
+        if (g?.kind === 'belote' && g.stage === 'bidding') this.cb.onInvalid(g.turn === this.mySeat ? 'Bid or pass first' : 'The auction is on');
         else this.cb.onInvalid('Wait for your turn');
       }
       return;

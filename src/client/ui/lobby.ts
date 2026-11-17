@@ -254,12 +254,6 @@ export class Lobby {
           : h('div', { class: 'seg' }, h('button', { class: 'on', disabled: true, title: `${info.name} is played by four, in two teams` }, '2 vs 2')),
         h('span', { class: 'label' }, 'Play to'),
         seg(info.targets, s.targetScore, (v) => String(v), (v) => this.actions.settings({ targetScore: v })),
-        ...(s.game === 'belote'
-          ? [
-              h('span', { class: 'label', title: 'Tierce, cinquante, cent and carrés' }, 'Announcements'),
-              seg([true, false] as const, s.announcements, (v) => (v ? 'On' : 'Off'), (v) => this.actions.settings({ announcements: v })),
-            ]
-          : []),
         h('span', { class: 'label' }, 'Turn timer'),
         seg(TURN_TIMERS, s.turnSeconds, (v) => (v === 0 ? 'Off' : `${v}s`), (v) => this.actions.settings({ turnSeconds: v })),
         h('span', { class: 'label' }, 'Bots'),
