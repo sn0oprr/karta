@@ -1,17 +1,19 @@
-import { AVATAR_COLORS, type GameMode, NAME_MAX, normalizeRoomCode } from '../../shared/protocol';
-import { profile, saveProfile } from '../identity';
+import { AVATAR_COLORS, GAMES, GAME_INFO, type GameKind, type GameMode, NAME_MAX, isGameKind, normalizeRoomCode } from '../../shared/protocol';
+import { profile, readPref, saveProfile, writePref } from '../identity';
 import { sfx } from '../sfx';
 import { h } from './dom';
 
 export interface HomeActions {
-  create: (mode: GameMode) => Promise<void>;
+  create: (game: GameKind, mode: GameMode) => Promise<void>;
   join: (code: string, spectate: boolean) => Promise<void>;
-  rules: () => void;
+  rules: (game: GameKind) => void;
   profileChanged: () => void;
 }
 
 export function renderHome(actions: HomeActions, opts: { prefillCode?: string; spectate?: boolean } = {}): HTMLElement {
   let mode: GameMode = '2v2';
+  const saved = readPref<unknown>('game', 'chkobba');
+  let game: GameKind = isGameKind(saved) ? saved : 'chkobba';
   let busy = false;
 
   const nameInput = h('input', {
@@ -54,12 +56,15 @@ export function renderHome(actions: HomeActions, opts: { prefillCode?: string; s
 
   const modeSeg = h('div', { class: 'seg' });
   const drawMode = () => {
+    const modes = GAME_INFO[game].modes;
     modeSeg.replaceChildren(
-      ...(['1v1', '2v2'] as const).map((m) =>
+      ...modes.map((m) =>
         h(
           'button',
           {
-            class: mode === m ? 'on' : '',
+            class: mode === m || modes.length === 1 ? 'on' : '',
+            disabled: modes.length === 1,
+            title: modes.length === 1 ? `${GAME_INFO[game].name} is played by four, in two teams` : undefined,
             onclick: () => {
               mode = m;
               sfx.play('click');
@@ -81,7 +86,7 @@ export function renderHome(actions: HomeActions, opts: { prefillCode?: string; s
     busy = true;
     createBtn.disabled = true;
     try {
-      await actions.create(mode);
+      await actions.create(game, GAME_INFO[game].modes.includes(mode) ? mode : GAME_INFO[game].modes[0]!);
     } finally {
       busy = false;
       createBtn.disabled = false;
@@ -126,13 +131,35 @@ export function renderHome(actions: HomeActions, opts: { prefillCode?: string; s
   const joinBtn = h('button', { class: 'btn', onclick: () => void doJoin(false) }, 'Join');
   const watchBtn = h('button', { class: 'btn ghost', title: 'Watch as a spectator', onclick: () => void doJoin(true) }, '👀 Watch');
 
-  const games = h(
-    'div',
-    { class: 'game-picker' },
-    h('div', { class: 'game-tile on' }, 'Chkobba', h('span', { class: 'soon' }, 'شكبّة')),
-    h('div', { class: 'game-tile locked' }, 'Rami', h('span', { class: 'soon' }, 'coming soon')),
-    h('div', { class: 'game-tile locked' }, 'Belote', h('span', { class: 'soon' }, 'coming soon')),
-  );
+  const rulesBtn = h('button', { class: 'btn small ghost', onclick: () => actions.rules(game) });
+  const games = h('div', { class: 'game-picker' });
+  const drawGames = () => {
+    games.replaceChildren(
+      ...GAMES.map((k) =>
+        h(
+          'button',
+          {
+            class: `game-tile ${game === k ? 'on' : ''}`,
+            'aria-pressed': game === k ? 'true' : 'false',
+            onclick: () => {
+              if (game === k) return;
+              game = k;
+              writePref('game', k);
+              sfx.unlock();
+              sfx.play('click');
+              drawGames();
+              drawMode();
+            },
+          },
+          GAME_INFO[k].name,
+          h('span', { class: 'soon' }, GAME_INFO[k].arabic),
+        ),
+      ),
+      h('div', { class: 'game-tile locked' }, 'Rami', h('span', { class: 'soon' }, 'coming soon')),
+    );
+    rulesBtn.textContent = `📜 How to play ${GAME_INFO[game].name}`;
+  };
+  drawGames();
 
   const invited = !!opts.prefillCode;
   const card = h(
@@ -170,7 +197,7 @@ export function renderHome(actions: HomeActions, opts: { prefillCode?: string; s
       h(
         'div',
         { class: 'home-links' },
-        h('button', { class: 'btn small ghost', onclick: () => actions.rules() }, '📜 How to play Chkobba'),
+        rulesBtn,
       ),
     ),
   );

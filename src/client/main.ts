@@ -4,7 +4,18 @@ import '@fontsource/fredoka/600.css';
 import '@fontsource/fredoka/700.css';
 import './styles.css';
 import { makeDeck } from '../shared/cards';
-import { DRINKS, type DrinkId, type GameMode, type RoomMessage, type RoomView, normalizeRoomCode } from '../shared/protocol';
+import { callLabel, contractLabel, makeBeloteDeck } from '../shared/belote';
+import {
+  DRINKS,
+  type DrinkId,
+  GAME_INFO,
+  type GameKind,
+  type GameMode,
+  type RoomMessage,
+  type RoomView,
+  normalizeRoomCode,
+} from '../shared/protocol';
+import { teamOf } from '../shared/teams';
 import { drinkAudio } from './drinkAudio';
 import { Board, type SfxName } from './game3d/board';
 import { ensureCardFonts } from './game3d/cardArt';
@@ -17,6 +28,7 @@ import { animator } from './game3d/tween';
 import { profile, saveProfile, withDefaultName } from './identity';
 import { Net } from './net';
 import { sfx } from './sfx';
+import { BidPanel } from './ui/bid';
 import { CafePicker } from './ui/cafe';
 import { h, modal, toast } from './ui/dom';
 import { renderHome } from './ui/home';
@@ -51,6 +63,7 @@ class App {
   emotes: EmotePicker;
   voicePanel: VoicePanel;
   results: ResultsView;
+  bid: BidPanel;
   studio = new PortraitStudio();
   cafe: CafePicker;
   /** In-game pop-up holding the café picker (the lobby shows it inline). */
@@ -81,7 +94,11 @@ class App {
         return res.ok;
       },
       chooseCapture: (card, options) => chooseCapture(card, options, (ids) => this.board.highlightOption(ids)),
-      onChkobba: (seat) => this.chkobbaBanner(seat),
+      onChkobba: (seat) => {
+        const room = this.displayed ?? this.room;
+        const who = seat === room?.you.seat ? 'Bravo! You swept the table!' : `${room?.seats[seat]?.name ?? 'Someone'} swept the table!`;
+        this.bigBanner('CHKOBBA!', who);
+      },
       onRoundEnd: () => {},
       onDisplayed: (room) => this.onDisplayed(room),
       sfx: (name: SfxName) => sfx.play(name),
@@ -91,6 +108,26 @@ class App {
         this.net.socket.emit('sip');
       },
       drinkSound: (drink, pan) => drinkAudio.play(drink, { pan }),
+      onBid: ({ seat, call }) => {
+        sfx.play(call.type === 'pass' ? 'pop' : 'select');
+        this.seatBubble(seat, call.type === 'contre' || call.type === 'surcontre' ? `⚔️ ${callLabel(call)}` : callLabel(call));
+      },
+      onContract: (contract, coinche) => {
+        if (contract.value === 'kabbout') this.bigBanner('KABBOUT!', `${this.seatName(contract.seat)} will take every trick`, 'small');
+        else if (coinche > 1) this.bigBanner(coinche === 4 ? 'SURCONTRE ×4' : 'CONTRE ×2', `${contractLabel(contract)} — ${this.seatName(contract.seat)}`, 'small');
+      },
+      onBelote: (seat, word) => this.seatBubble(seat, word === 'belote' ? '👑 Belote!' : '👑 Rebelote!'),
+      onRedeal: () => toast('Everybody passed — new deal 🃏', 'info', 2600),
+      onBeloteEnd: (r) => {
+        const takers = teamOf(r.contract.seat);
+        const who = this.seatName(r.contract.seat);
+        if (r.contract.value === 'kabbout') {
+          if (r.outcome === 'made') this.bigBanner('KABBOUT!', `${this.teamLabel(takers)} took every trick!`);
+          else this.bigBanner('KABBOUT LOST', `${who} lost a trick`, 'coral');
+        } else if (r.outcome === 'failed') {
+          this.bigBanner('CHUTE!', r.early ? `${who} can no longer make ${r.contract.value}` : `${who} missed ${r.contract.value}`, 'coral');
+        } else if (r.capot === takers) this.bigBanner('CAPOT!', `${this.teamLabel(takers)} took every trick!`);
+      },
     });
     this.studio.sound = (drink) => drinkAudio.play(drink);
     this.cafe = new CafePicker(this.studio, (patch) => {
@@ -139,7 +176,7 @@ class App {
 
     this.hud = new Hud({
       leave: () => this.leaveRoom(),
-      rules: () => showRules(),
+      rules: () => showRules(this.room?.settings.game ?? 'chkobba'),
       toggleChat: () => {
         this.emotes.toggle(false);
         this.toggleCafe(false);
@@ -191,7 +228,12 @@ class App {
       toLobby: () => void this.act('toLobby'),
       leave: () => this.leaveRoom(),
     });
-    this.roomLayer.append(this.tags.el, this.hud.el, this.lobby.el, this.chat.el, this.emotes.el, this.cafePop, this.voicePanel.el);
+    this.bid = new BidPanel(async (call) => {
+      const res = await this.net.call('bid', call);
+      if (!res.ok) toast(res.error, 'error');
+      return res.ok;
+    });
+    this.roomLayer.append(this.tags.el, this.hud.el, this.bid.el, this.lobby.el, this.chat.el, this.emotes.el, this.cafePop, this.voicePanel.el);
 
     this.bindNet();
     // The render loop pauses in background tabs: finish animations instantly there so the
@@ -261,8 +303,18 @@ class App {
     if (!res.ok) toast(res.error, 'error');
   }
 
+  private beloteWarm = false;
+
   private onRoomMessage(m: RoomMessage) {
     this.tags.syncClock(m.room.serverTime);
+    if (m.room.settings.game === 'belote' && !this.beloteWarm) {
+      // Belote's own card faces, built ahead of the first deal.
+      this.beloteWarm = true;
+      const ids = makeBeloteDeck().map((c) => c.id);
+      const warm = () => prewarmCardTextures(this.stage.renderer, ids);
+      if ('requestIdleCallback' in window) (window as Window).requestIdleCallback(warm, { timeout: 1500 });
+      else setTimeout(warm, 300);
+    }
     const first = !this.room || this.room.code !== m.room.code;
     const before = new Map((first ? [] : this.room!.seats).flatMap((p) => (p ? [[p.id, p.drink] as const] : [])));
     this.room = m.room;
@@ -305,6 +357,7 @@ class App {
     for (const el of this.hud.el.querySelectorAll<HTMLElement>('.scoreboard, .turn-banner')) el.classList.toggle('hidden', inLobby);
     if (inLobby) this.lobby.update(this.room ?? room);
     this.hud.update(room, { myTurnReady: this.board.myTurnReady, busy: this.board.isAnimating, clockOffset: this.tags.offset });
+    this.bid.sync(room, this.board.bidReady);
     this.results.sync(room, this.tags.offset);
     if (room.phase === 'gameOver' && prevPhase !== 'gameOver') this.board.celebrateWinner(room);
 
@@ -314,7 +367,33 @@ class App {
       if (document.hidden) this.flashTitle();
     }
     this.wasMyTurn = myTurn;
-    setTimeout(() => this.hud.update(room, { myTurnReady: this.board.myTurnReady, busy: false, clockOffset: this.tags.offset }), 50);
+    setTimeout(() => {
+      this.hud.update(room, { myTurnReady: this.board.myTurnReady, busy: false, clockOffset: this.tags.offset });
+      this.bid.sync(this.displayed === room ? room : this.displayed, this.board.bidReady);
+    }, 50);
+  }
+
+  /** A speech bubble over a seat (or by the hand for the local player). */
+  private seatBubble(seat: number, text: string) {
+    const room = this.displayed ?? this.room;
+    const p = room?.seats[seat];
+    if (p) this.tags.bubble(p.id, text);
+  }
+
+  /** A player's name ("You" for the local player). */
+  private seatName(seat: number): string {
+    const room = this.displayed ?? this.room;
+    return seat === room?.you.seat ? 'You' : (room?.seats[seat]?.name ?? 'Someone');
+  }
+
+  private teamLabel(team: number): string {
+    const room = this.displayed ?? this.room;
+    if (!room) return '';
+    return room.seats
+      .map((p, i) => ({ p, i }))
+      .filter(({ i }) => teamOf(i) === team)
+      .map(({ p, i }) => (i === room.you.seat ? 'You' : (p?.name ?? '?')))
+      .join(' & ');
   }
 
   private cafeOpen = false;
@@ -349,11 +428,9 @@ class App {
     document.addEventListener('visibilitychange', stop);
   }
 
-  private chkobbaBanner(seat: number) {
-    const room = this.displayed ?? this.room;
-    const p = room?.seats[seat];
-    const who = seat === room?.you.seat ? 'Bravo! You swept the table!' : `${p?.name ?? 'Someone'} swept the table!`;
-    const el = h('div', { class: 'big-banner' }, h('div', { class: 'word' }, 'CHKOBBA!'), h('div', { class: 'who' }, who));
+  /** A big word across the table (CHKOBBA!, CAPOT!, CHUTE!) with a line under it. */
+  private bigBanner(word: string, who: string, style = '') {
+    const el = h('div', { class: `big-banner ${style}` }, h('div', { class: 'word' }, word), h('div', { class: 'who' }, who));
     uiRoot.appendChild(el);
     setTimeout(() => el.remove(), 2000);
   }
@@ -390,14 +467,15 @@ class App {
     this.chat.toggle(false);
     this.toggleCafe(false);
     this.voicePanel.toggle(false);
+    this.bid.sync(null, false);
     this.voice.leave();
     this.board.showMenu();
     if (!opts.prefillCode && location.pathname !== '/') history.pushState(null, '', '/');
     this.homeEl = renderHome(
       {
-        create: (mode) => this.createRoom(mode),
+        create: (game, mode) => this.createRoom(game, mode),
         join: (code, spectate) => this.joinRoom(code, spectate),
-        rules: () => showRules(),
+        rules: (game) => showRules(game),
         profileChanged: () => this.net.updateProfile(),
       },
       opts,
@@ -412,12 +490,12 @@ class App {
     uiRoot.appendChild(this.loadingEl);
   }
 
-  private async createRoom(mode: GameMode) {
+  private async createRoom(game: GameKind, mode: GameMode) {
     saveProfile({ named: true });
     this.net.updateProfile();
-    this.showLoading('Setting the table…');
+    this.showLoading(`Setting the ${GAME_INFO[game].name} table…`);
     await this.net.ready();
-    const res = await this.net.call<{ code: string }>('create', { settings: { mode } });
+    const res = await this.net.call<{ code: string }>('create', { settings: { game, mode } });
     if (!res.ok) {
       toast(res.error, 'error');
       this.goHome();

@@ -1,14 +1,4 @@
 import type { Server, Socket } from 'socket.io';
-import { cardShort } from '../shared/cards';
-import {
-  ChkobbaGame,
-  type DealInfo,
-  type Move,
-  type PlayInfo,
-  type RoundResult,
-  teamOf,
-} from '../shared/chkobba';
-import { botContext, chooseBotMove } from '../shared/bot';
 import {
   AVATAR_COLORS,
   BOT_LEVELS,
@@ -20,7 +10,7 @@ import {
   type DrinkId,
   EMOTES,
   type EmoteId,
-  type GameEvent,
+  GAME_INFO,
   type GameView,
   type PlayerInfo,
   type RoomPhase,
@@ -28,11 +18,17 @@ import {
   type RoomView,
   type ServerToClient,
   SKIN_TONES,
-  TARGET_SCORES,
   TURN_TIMERS,
   VOICE_MAX,
+  isGameKind,
   seatCount,
 } from '../shared/protocol';
+import { type Team, teamOf } from '../shared/teams';
+import { RoomError } from './errors';
+import { type Action, type AutoReason, type InternalEvent, type Outcome, type TableGame, createTable, eventDuration, personalizeEvent } from './tables';
+import { TIMING } from './timing';
+
+export { RoomError, TIMING };
 
 export type IO = Server<ClientToServer, ServerToClient>;
 export type Sock = Socket<ClientToServer, ServerToClient>;
@@ -57,43 +53,6 @@ export interface Member extends MemberProfile {
   lastEmote: number;
   lastSip: number;
 }
-
-type InternalEvent =
-  | { kind: 'gameStart' }
-  | { kind: 'deal'; deal: DealInfo }
-  | { kind: 'play'; play: PlayInfo; auto: boolean }
-  | { kind: 'roundEnd'; result: RoundResult };
-
-export class RoomError extends Error {}
-
-/** Timings (ms). Client animations are paced to roughly match these. */
-export const TIMING = {
-  gameStart: 400,
-  dealInitialExtra: 400,
-  twoPlayerExtra: 100,
-  dealPerCard: 110,
-  dealTablePerCard: 160,
-  dealBase: 700,
-  playLay: 900,
-  playCapture: 1300,
-  chkobbaBonus: 1700,
-  roundEnd: 1800,
-  botThinkMin: 650,
-  botThinkMax: 1500,
-  autopilotDelay: 1100,
-  /** Disconnected seated players are auto-played after this grace period (in game). */
-  autopilotGrace: 20_000,
-  /** Disconnected members are removed from the lobby after this. */
-  lobbyGrace: 45_000,
-  hostGrace: 20_000,
-  /** Results screen duration before the next hand starts automatically. */
-  roundPause: 15_000,
-  /** Delay before the next hand once everyone pressed "continue". */
-  nextRoundDelay: 800,
-  minDelay: 400,
-  /** Results pause when only bots are seated (spectators watching). */
-  botsOnlyPause: 7000,
-};
 
 /** Sipping pace (kept apart from TIMING, which tests shrink to make games fast). */
 export const SIP_TIMING = {
@@ -127,28 +86,6 @@ function pickProfile(p: MemberProfile): MemberProfile {
   return { name: p.name, color: p.color, character: p.character, skin: p.skin, drink: p.drink };
 }
 
-export function eventDuration(ev: InternalEvent, numPlayers: number): number {
-  switch (ev.kind) {
-    case 'gameStart':
-      return TIMING.gameStart;
-    case 'deal':
-      return (
-        TIMING.dealBase +
-        ev.deal.order.length * TIMING.dealPerCard +
-        ev.deal.table.length * TIMING.dealTablePerCard +
-        (ev.deal.initial ? TIMING.dealInitialExtra : 0)
-      );
-    case 'play':
-      return (
-        (ev.play.captured.length > 0 ? TIMING.playCapture : TIMING.playLay) +
-        (ev.play.chkobba ? TIMING.chkobbaBonus : 0) +
-        (numPlayers === 4 ? 0 : TIMING.twoPlayerExtra)
-      );
-    case 'roundEnd':
-      return TIMING.roundEnd;
-  }
-}
-
 export interface RoomDeps {
   io: IO;
   rand: () => number;
@@ -165,7 +102,7 @@ export class Room {
   /** Humans in the room (seated or spectating), by id. */
   members = new Map<string, Member>();
   voice = new Map<string, { muted: boolean }>();
-  game: ChkobbaGame | null = null;
+  game: TableGame | null = null;
   chat: ChatMessage[] = [];
   banned = new Set<string>();
   lastActivity = Date.now();
@@ -178,7 +115,6 @@ export class Room {
   private turnDeadline: number | null = null;
   private nextRoundAt: number | null = null;
   private ready = new Set<string>();
-  private lastPlay: PlayInfo | null = null;
   private botNameIdx: number;
   private sipTicker: ReturnType<typeof setInterval>;
   private destroyed = false;
@@ -444,12 +380,21 @@ export class Room {
     this.requireHost(id);
     this.requireLobby();
     const next = { ...this.settings };
+    if (patch.game !== undefined && patch.game !== next.game) {
+      if (!isGameKind(patch.game)) throw new RoomError('Unknown game.');
+      // Each game has its own targets and table sizes.
+      next.game = patch.game;
+      next.targetScore = GAME_INFO[next.game].defaultTarget;
+      if (!GAME_INFO[next.game].modes.includes(next.mode)) next.mode = GAME_INFO[next.game].modes[0]!;
+    }
+    const info = GAME_INFO[next.game];
     if (patch.mode !== undefined) {
       if (patch.mode !== '1v1' && patch.mode !== '2v2') throw new RoomError('Invalid mode.');
+      if (!info.modes.includes(patch.mode)) throw new RoomError(`${info.name} is played 2 vs 2.`);
       next.mode = patch.mode;
     }
     if (patch.targetScore !== undefined) {
-      if (!TARGET_SCORES.includes(patch.targetScore)) throw new RoomError('Invalid target.');
+      if (!info.targets.includes(patch.targetScore)) throw new RoomError('Invalid target.');
       next.targetScore = patch.targetScore;
     }
     if (patch.turnSeconds !== undefined) {
@@ -554,19 +499,14 @@ export class Room {
 
   private startGame() {
     this.clearActionTimer();
-    this.game = new ChkobbaGame({
-      numPlayers: this.seats.length as 2 | 4,
-      targetScore: this.settings.targetScore,
-      rand: this.deps.rand,
-    });
+    this.game = createTable(this.settings, this.seats.length, this.deps.rand);
     this.phase = 'playing';
-    this.lastPlay = null;
     this.ready.clear();
     this.nextRoundAt = null;
     this.busyUntil = Date.now();
-    const deal = this.game.startRound();
-    this.system(`New game — first to ${this.settings.targetScore} points. Yalla!`);
-    this.advance([{ kind: 'gameStart' }, { kind: 'deal', deal }]);
+    const events = this.game.startRound();
+    this.system(`New game of ${GAME_INFO[this.game.kind].name} — first to ${this.settings.targetScore} points. Yalla!`);
+    this.advance([{ kind: 'gameStart' }, ...events]);
   }
 
   rematch(id: string) {
@@ -598,45 +538,42 @@ export class Room {
     this.broadcast();
   }
 
-  play(id: string, move: Move, auto = false) {
+  /** A player plays a card. */
+  play(id: string, move: unknown) {
+    this.act(id, { type: 'play', move });
+  }
+
+  /** Belote: a call in the auction (bid, pass, contre or surcontre). */
+  bid(id: string, call: unknown) {
+    this.act(id, { type: 'bid', call });
+  }
+
+  private act(id: string, action: Action) {
     const game = this.game;
     if (!game || this.phase !== 'playing') throw new RoomError('No hand in progress.');
     const seat = this.seats.findIndex((s) => s?.id === id);
     if (seat < 0) throw new RoomError('You are not seated.');
     if (game.turn !== seat) throw new RoomError('Not your turn.');
-    if (
-      !move ||
-      typeof move.cardId !== 'string' ||
-      !Array.isArray(move.capture) ||
-      move.capture.length > 20 ||
-      !move.capture.every((x) => typeof x === 'string')
-    ) {
-      throw new RoomError('Invalid move.');
-    }
-    if (!game.isLegal(seat, move)) throw new RoomError('That move is not allowed.');
-    this.applyMove(seat, move, auto);
+    this.apply(game.act(seat, action, false, this.names));
   }
 
-  private applyMove(seat: number, move: Move, auto: boolean) {
-    const game = this.game!;
+  private readonly names = {
+    seat: (seat: number) => this.seats[seat]?.name ?? '?',
+    team: (team: Team) => this.teamLabel(team),
+  };
+
+  /** Moves the table on after an action the game has applied. */
+  private apply(out: Outcome) {
     this.clearActionTimer();
     this.turnDeadline = null;
     this.touch();
-    const out = game.play(seat, move);
-    this.lastPlay = out.play;
-    const events: InternalEvent[] = [{ kind: 'play', play: out.play, auto }];
-    const who = this.seats[seat]!;
-    if (out.play.chkobba) this.system(`🔥 ${who.name} made a CHKOBBA with ${cardShort(out.play.card)}!`);
-    if (out.deal) events.push({ kind: 'deal', deal: out.deal });
-    if (out.round) {
-      events.push({ kind: 'roundEnd', result: out.round });
-      this.onRoundEnd(out.round);
-    }
-    this.advance(events);
+    for (const line of out.messages) this.system(line);
+    if (out.handEnd) this.onRoundEnd(out.handEnd);
+    this.advance(out.events);
     if (this.phase === 'roundOver') this.maybeStartNextRound();
   }
 
-  private onRoundEnd(result: RoundResult) {
+  private onRoundEnd(result: { round: number; points: [number, number]; totals: [number, number]; winner: Team | null }) {
     this.ready.clear();
     const teamName = (t: number) => this.teamLabel(t);
     if (result.winner !== null) {
@@ -684,10 +621,8 @@ export class Room {
     this.phase = 'playing';
     this.ready.clear();
     this.nextRoundAt = null;
-    this.lastPlay = null;
     this.busyUntil = Math.max(this.busyUntil, Date.now());
-    const deal = this.game.startRound();
-    this.advance([{ kind: 'deal', deal }]);
+    this.advance(this.game.startRound());
   }
 
   private clearActionTimer() {
@@ -717,33 +652,32 @@ export class Room {
     const startAt = Math.max(now, this.busyUntil);
     if (member.bot) {
       const think = TIMING.botThinkMin + this.deps.rand() * (TIMING.botThinkMax - TIMING.botThinkMin);
-      this.actionTimer = setTimeout(() => this.autoMove(seat, false), startAt - now + think);
+      this.actionTimer = setTimeout(() => this.autoMove(seat, 'bot'), startAt - now + think);
     } else if (member.autopilot) {
-      this.actionTimer = setTimeout(() => this.autoMove(seat, true), startAt - now + TIMING.autopilotDelay);
+      this.actionTimer = setTimeout(() => this.autoMove(seat, 'autopilot'), startAt - now + TIMING.autopilotDelay);
     } else if (this.settings.turnSeconds > 0) {
       this.turnDeadline = startAt + this.settings.turnSeconds * 1000;
       this.actionTimer = setTimeout(() => {
         const m = this.seats[seat];
         if (m && !m.bot) this.system(`⏰ Time's up for ${m.name}.`);
-        this.autoMove(seat, true);
+        this.autoMove(seat, 'timeout');
       }, this.turnDeadline - now);
     }
   }
 
-  private autoMove(seat: number, auto: boolean) {
+  private autoMove(seat: number, reason: AutoReason) {
     this.actionTimer = null;
     const game = this.game;
     if (!game || this.phase !== 'playing' || game.turn !== seat || this.destroyed) return;
-    const level = this.seats[seat]?.bot ? this.settings.botLevel : 'normal';
-    let move: Move;
+    const auto = reason !== 'bot';
+    let out: Outcome;
     try {
-      move = chooseBotMove(botContext(game, seat), level, this.deps.rand);
-      if (!game.isLegal(seat, move)) throw new Error('bot produced an illegal move');
+      out = game.act(seat, game.autoAction(seat, this.settings.botLevel, this.deps.rand, reason), auto, this.names);
     } catch (err) {
       console.error(`[room ${this.code}] bot error`, err);
-      move = game.legalMoves(seat)[0]!;
+      out = game.act(seat, game.fallbackAction(seat), auto, this.names);
     }
-    this.applyMove(seat, move, auto);
+    this.apply(out);
   }
 
   // ─────────────────────────────── social ───────────────────────────────
@@ -857,33 +791,8 @@ export class Room {
     this.version++;
     for (const m of this.members.values()) {
       if (!m.socket || !m.connected) continue;
-      m.socket.emit('room', { room: this.viewFor(m.id), events: events.map((e) => this.personalize(e, m.id)) });
-    }
-  }
-
-  private personalize(ev: InternalEvent, viewerId: string): GameEvent {
-    switch (ev.kind) {
-      case 'deal': {
-        const seat = this.seatOf(viewerId);
-        const d = ev.deal;
-        return {
-          kind: 'deal',
-          round: d.round,
-          dealer: d.dealer,
-          initial: d.initial,
-          order: d.order,
-          table: d.table,
-          myCards: seat === null ? null : d.hands[seat]!,
-          redeals: d.redeals,
-          deckCountAfter: d.deckCountAfter,
-        };
-      }
-      case 'play':
-        return { kind: 'play', play: ev.play, auto: ev.auto };
-      case 'roundEnd':
-        return { kind: 'roundEnd', result: ev.result };
-      case 'gameStart':
-        return { kind: 'gameStart' };
+      const seat = this.seatOf(m.id);
+      m.socket.emit('room', { room: this.viewFor(m.id), events: events.map((e) => personalizeEvent(e, seat)) });
     }
   }
 
@@ -907,20 +816,7 @@ export class Room {
     let game: GameView | null = null;
     if (g) {
       game = {
-        round: g.round,
-        dealer: g.dealer,
-        turn: g.turn,
-        deckCount: g.deck.length,
-        table: g.table,
-        handCounts: g.hands.map((h) => h.length),
-        myHand: seat === null ? null : g.hands[seat]!,
-        pileCounts: g.piles.map((p) => p.length),
-        chkobbaCards: g.chkobbaCards,
-        scores: g.scores,
-        lastCapturer: g.lastCapturer,
-        lastPlay: this.lastPlay,
-        lastRound: g.lastRound,
-        winner: g.winner,
+        ...g.view(seat),
         turnDeadline: this.turnDeadline,
         ready: [...this.ready],
         nextRoundAt: this.phase === 'roundOver' ? this.nextRoundAt : null,

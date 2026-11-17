@@ -1,9 +1,9 @@
 import { type Card, cardShort } from '../../shared/cards';
-import { AVATAR_COLORS, CHAT_MAX, type ChatMessage, EMOTES, type EmoteId, type RoomView } from '../../shared/protocol';
+import { AVATAR_COLORS, CHAT_MAX, type ChatMessage, EMOTES, type EmoteId, type GameKind, type RoomView } from '../../shared/protocol';
 import { sfx } from '../sfx';
 import { VoiceChat } from '../voice';
 import { h, modal } from './dom';
-import { miniCard } from './results';
+import { miniCard } from './miniCard';
 
 // ───────────────────────────── chat ─────────────────────────────
 
@@ -310,7 +310,11 @@ export function chooseCapture(card: Card, options: Card[][], onHover: (ids: stri
 
 // ───────────────────────────── rules ─────────────────────────────
 
-export function showRules() {
+export function showRules(game: GameKind = 'chkobba') {
+  if (game === 'belote') {
+    showBeloteRules();
+    return;
+  }
   const body = h(
     'div',
     { class: 'rules' },
@@ -353,6 +357,100 @@ export function showRules() {
       h('li', null, 'Keys ', h('span', { class: 'kbd' }, '1'), ' ', h('span', { class: 'kbd' }, '2'), ' ', h('span', { class: 'kbd' }, '3'), ' select a card, ', h('span', { class: 'kbd' }, 'Enter'), ' plays it.'),
       h('li', null, 'Tap your drink on the table (or press ', h('span', { class: 'kbd' }, 'D'), ') to take a sip — or a puff of chicha. Change your order and your character with the ☕ button.'),
       h('li', null, 'In voice chat, hold ', h('span', { class: 'kbd' }, 'V'), ' to talk while muted.'),
+    ),
+  );
+  const m = modal(body);
+  body.appendChild(h('div', { class: 'modal-actions' }, h('button', { class: 'btn', onclick: () => m.close() }, 'Yalla, let’s play!')));
+}
+
+function showBeloteRules() {
+  const kbd = (k: string) => h('span', { class: 'kbd' }, k);
+  const values = (title: string, list: [string, string][]) =>
+    h(
+      'div',
+      { class: 'values' },
+      h('b', null, title),
+      h('div', { class: 'value-row' }, ...list.map(([card, pts]) => h('span', { class: 'value' }, h('span', { class: 'v-card' }, card), h('span', { class: 'v-pts' }, pts)))),
+    );
+  const body = h(
+    'div',
+    { class: 'rules' },
+    h('h2', null, 'How to play Belote'),
+    h(
+      'p',
+      null,
+      'Tunisian Belote (بلوت) is played the way Tunisian cafés play it: with an auction, as in ',
+      h('i', null, 'belote coinchée'),
+      '. Four players in two teams; your partner sits opposite you.',
+    ),
+    h('h3', null, 'The cards'),
+    h('p', null, '32 cards, 7 to Ace. The trump suit ranks differently from the others:'),
+    values('Trumps', [
+      ['J', '20'],
+      ['9', '14'],
+      ['A', '11'],
+      ['10', '10'],
+      ['K', '4'],
+      ['Q', '3'],
+      ['8', '0'],
+      ['7', '0'],
+    ]),
+    values('Other suits', [
+      ['A', '11'],
+      ['10', '10'],
+      ['K', '4'],
+      ['Q', '3'],
+      ['J', '2'],
+      ['9', '0'],
+      ['8', '0'],
+      ['7', '0'],
+    ]),
+    h('p', null, 'The last trick is worth 10 more (', h('i', null, 'dix de der'), '): 162 points in a hand.'),
+    h('h3', null, 'The auction'),
+    h(
+      'ul',
+      null,
+      h('li', null, 'Everyone gets 8 cards, in two lots of 4. The player on the dealer’s right speaks first.'),
+      h('li', null, 'Bid what your team will make with your trumps: ', h('b', null, '90 to 160'), ' (by tens), or ', h('b', null, 'Kabbout'), ' (كبوط) — every trick. Each bid must be higher than the last; you may bid again, even over your partner.'),
+      h('li', null, 'The other team may say ', h('b', null, 'Contre'), ' (×2); the bidders may answer ', h('b', null, 'Surcontre'), ' (×4).'),
+      h('li', null, 'Three passes after a bid end the auction. If all four pass, the next dealer deals again.'),
+    ),
+    h('h3', null, 'Tricks'),
+    h(
+      'ul',
+      null,
+      h('li', null, 'The player on the dealer’s right leads; whoever wins a trick leads the next.'),
+      h('li', null, h('b', null, 'Follow suit'), ' if you can. When trumps are led, play a higher trump if you can.'),
+      h(
+        'li',
+        null,
+        'If you cannot follow: when your partner is winning the trick you may play anything (with nothing but trumps, beat the best one if you can); otherwise you ',
+        h('b', null, 'must trump'),
+        ' — higher than any trump already played if you can.',
+      ),
+      h('li', null, 'The best trump wins the trick, else the best card of the suit led.'),
+      h('li', null, 'King and Queen of trumps in one hand: ', h('b', null, 'Belote'), ' and ', h('b', null, 'Rebelote'), ' as you play them, 20 points.'),
+    ),
+    h('h3', null, 'Scoring'),
+    h(
+      'ul',
+      null,
+      h('li', null, 'Each team’s card points are rounded to the ten (5 and up rounds up); the belote adds 20.'),
+      h('li', null, 'The bidders must make ', h('b', null, 'their bid and more than the other team'), '. Then each team scores what it made.'),
+      h('li', null, 'If they fail it’s a ', h('b', null, 'chute'), ': the other team scores 160 (and the belote). As soon as the bid can no longer be made, the cards are thrown in.'),
+      h('li', null, 'Every trick without having bid Kabbout: ', h('b', null, 'capot'), ', 250. Kabbout is worth 500, won or lost; it is lost with the first trick the other team takes.'),
+      h('li', null, 'After a contre, a contract made or lost scores 160 ×2 (×4 after surcontre); the belote is never doubled.'),
+    ),
+    h('p', null, 'First team to reach the target (1000, 1500 or 2000) at the end of a hand wins.'),
+    h('h3', null, 'Controls'),
+    h(
+      'ul',
+      null,
+      h('li', null, 'Click a card to play it; on touch screens tap to select, tap again to play. Cards the rules don’t allow right now are shaded.'),
+      h('li', null, 'Keys ', kbd('1'), '–', kbd('8'), ' select a card, ', kbd('Enter'), ' plays it.'),
+      h('li', null, 'In the auction, pick a value with − and +, then click the trump suit to bid it.'),
+      h('li', null, 'The gold token in front of the bidder shows the trumps; the contract is shown between the scores.'),
+      h('li', null, 'Tap your drink (or press ', kbd('D'), ') to take a sip. In voice chat, hold ', kbd('V'), ' to talk while muted.'),
     ),
   );
   const m = modal(body);

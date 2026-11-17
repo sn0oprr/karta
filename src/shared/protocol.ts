@@ -1,12 +1,38 @@
 /**
  * Client ⇄ server contract (Socket.IO events and payloads).
  */
-import type { Card } from './cards';
-import type { Move, PlayInfo, RoundResult, Team } from './chkobba';
+import type { Card, Suit } from './cards';
+import type { AuctionAction, AuctionCall, BCard, BeloteRoundResult, BeloteTrickInfo, Coinche, Contract, TrickPlay } from './belote';
+import { BELOTE_TARGETS } from './belote';
+import type { PlayInfo, RoundResult } from './chkobba';
+import type { Team } from './teams';
 
 export type GameMode = '1v1' | '2v2';
+
+export const GAMES = ['chkobba', 'belote'] as const;
+export type GameKind = (typeof GAMES)[number];
+
+/** Chkobba's targets (Belote's are BELOTE_TARGETS). */
 export const TARGET_SCORES = [11, 21, 31] as const;
-export type TargetScore = (typeof TARGET_SCORES)[number];
+
+export interface GameInfo {
+  name: string;
+  /** The name in Arabic script. */
+  arabic: string;
+  modes: readonly GameMode[];
+  targets: readonly number[];
+  defaultTarget: number;
+}
+
+export const GAME_INFO: Readonly<Record<GameKind, GameInfo>> = {
+  chkobba: { name: 'Chkobba', arabic: 'شكبّة', modes: ['1v1', '2v2'], targets: TARGET_SCORES, defaultTarget: 21 },
+  belote: { name: 'Belote', arabic: 'بلوت', modes: ['2v2'], targets: BELOTE_TARGETS, defaultTarget: 1500 },
+};
+
+export function isGameKind(v: unknown): v is GameKind {
+  return GAMES.includes(v as GameKind);
+}
+
 export const TURN_TIMERS = [0, 15, 30, 60] as const;
 export type TurnTimer = (typeof TURN_TIMERS)[number];
 
@@ -14,14 +40,22 @@ export const BOT_LEVELS = ['easy', 'normal', 'hard'] as const;
 export type BotLevelSetting = (typeof BOT_LEVELS)[number];
 
 export interface RoomSettings {
+  game: GameKind;
   mode: GameMode;
-  targetScore: TargetScore;
+  /** Points to reach: one of the game's `targets`. */
+  targetScore: number;
   /** Seconds per turn; 0 = unlimited. When time runs out the move is played automatically. */
   turnSeconds: TurnTimer;
   botLevel: BotLevelSetting;
 }
 
-export const DEFAULT_SETTINGS: RoomSettings = { mode: '1v1', targetScore: 21, turnSeconds: 0, botLevel: 'normal' };
+export const DEFAULT_SETTINGS: RoomSettings = {
+  game: 'chkobba',
+  mode: '1v1',
+  targetScore: 21,
+  turnSeconds: 0,
+  botLevel: 'normal',
+};
 
 export function seatCount(mode: GameMode): 2 | 4 {
   return mode === '1v1' ? 2 : 4;
@@ -132,22 +166,16 @@ export interface VoiceMember {
 /** Most people in one table's voice chat (a full mesh: everyone connects to everyone). */
 export const VOICE_MAX = 12;
 
-export interface GameView {
+/** What every game's view has. */
+export interface GameViewBase {
   round: number;
   dealer: number;
+  /** The seat the table waits for (to play, or to bid). */
   turn: number;
-  deckCount: number;
-  table: Card[];
   handCounts: number[];
-  /** The viewer's own hand (null for spectators). */
-  myHand: Card[] | null;
+  /** Cards in each seat's pile of captured cards / won tricks. */
   pileCounts: number[];
-  /** Cards that made a chkobba, kept face up on each seat's pile. */
-  chkobbaCards: Card[][];
   scores: [number, number];
-  lastCapturer: number | null;
-  lastPlay: PlayInfo | null;
-  lastRound: RoundResult | null;
   winner: Team | null;
   /** Epoch ms (server clock) when the current turn times out, or null. */
   turnDeadline: number | null;
@@ -156,6 +184,48 @@ export interface GameView {
   /** Epoch ms (server clock) when the next hand starts automatically (roundOver phase). */
   nextRoundAt: number | null;
 }
+
+export interface ChkobbaView extends GameViewBase {
+  kind: 'chkobba';
+  deckCount: number;
+  table: Card[];
+  /** The viewer's own hand (null for spectators). */
+  myHand: Card[] | null;
+  /** Cards that made a chkobba, kept face up on each seat's pile. */
+  chkobbaCards: Card[][];
+  lastCapturer: number | null;
+  lastPlay: PlayInfo | null;
+  lastRound: RoundResult | null;
+}
+
+export interface BeloteView extends GameViewBase {
+  kind: 'belote';
+  /** The auction, then the tricks; done once the hand is over (after the last trick, or earlier). */
+  stage: 'bidding' | 'playing' | 'done';
+  /** Calls of the current deal, in order. */
+  auction: AuctionAction[];
+  /** The best bid so far; once the auction is over, the contract. */
+  contract: Contract | null;
+  /** 1, ×2 after a contre, ×4 after a surcontre. */
+  coinche: Coinche;
+  /** Who said "contre". */
+  coincheBy: number | null;
+  trump: Suit | null;
+  taker: number | null;
+  /** The viewer's own hand (null for spectators). */
+  myHand: BCard[] | null;
+  /** The trick in progress, in play order. */
+  trick: TrickPlay[];
+  /** The last completed trick of this hand. */
+  lastTrick: Pick<BeloteTrickInfo, 'plays' | 'winner'> | null;
+  /** Tricks won by each seat this hand. */
+  tricksWon: number[];
+  /** Who said "Belote", and how many of the King and Queen of trumps they have played. */
+  belote: { seat: number; stage: number } | null;
+  lastRound: BeloteRoundResult | null;
+}
+
+export type GameView = ChkobbaView | BeloteView;
 
 export interface RoomView {
   code: string;
@@ -203,7 +273,62 @@ export interface GameStartEvent {
   kind: 'gameStart';
 }
 
-export type GameEvent = DealEvent | PlayEvent | RoundEndEvent | GameStartEvent;
+/** Belote: 8 cards each, in two lots of 4 (also after everybody passed: `redeals` > 0). */
+export interface BeloteDealEvent {
+  kind: 'beloteDeal';
+  round: number;
+  dealer: number;
+  /** Who receives each dealt card, in order. */
+  order: number[];
+  /** Viewer's cards (null for spectators). */
+  myCards: BCard[] | null;
+  redeals: number;
+}
+
+/** Belote: a call in the auction (a bid, pass, contre or surcontre). */
+export interface BeloteBidEvent {
+  kind: 'beloteBid';
+  action: AuctionAction;
+  auto: boolean;
+}
+
+/** Belote: the auction is over; the play starts. */
+export interface BeloteContractEvent {
+  kind: 'beloteContract';
+  contract: Contract;
+  coinche: Coinche;
+  coincheBy: number | null;
+}
+
+export interface BelotePlayEvent {
+  kind: 'belotePlay';
+  seat: number;
+  card: BCard;
+  belote: 'belote' | 'rebelote' | null;
+  auto: boolean;
+}
+
+export interface BeloteTrickEvent {
+  kind: 'beloteTrick';
+  trick: BeloteTrickInfo;
+}
+
+export interface BeloteEndEvent {
+  kind: 'beloteEnd';
+  result: BeloteRoundResult;
+}
+
+export type GameEvent =
+  | DealEvent
+  | PlayEvent
+  | RoundEndEvent
+  | GameStartEvent
+  | BeloteDealEvent
+  | BeloteBidEvent
+  | BeloteContractEvent
+  | BelotePlayEvent
+  | BeloteTrickEvent
+  | BeloteEndEvent;
 
 export interface RoomMessage {
   room: RoomView;
@@ -232,6 +357,12 @@ export const EMOTES = [
 ] as const;
 export type EmoteId = (typeof EMOTES)[number]['id'];
 
+export interface PlayRequest {
+  cardId: string;
+  /** Chkobba: ids of the table cards captured. */
+  capture?: string[];
+}
+
 export interface IceServerConfig {
   urls: string | string[];
   username?: string;
@@ -257,7 +388,10 @@ export interface ClientToServer {
   removeBot: (p: { seat: number }, ack: Ack) => void;
   kick: (p: { playerId: string }, ack: Ack) => void;
   start: (ack: Ack) => void;
-  play: (move: Move, ack: Ack) => void;
+  /** Plays a card (Chkobba: with the table cards it captures). */
+  play: (move: PlayRequest, ack: Ack) => void;
+  /** Belote: a call in the auction. */
+  bid: (p: AuctionCall, ack: Ack) => void;
   continue: () => void;
   rematch: (ack: Ack) => void;
   toLobby: (ack: Ack) => void;

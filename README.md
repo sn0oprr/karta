@@ -1,15 +1,16 @@
 # Karta · كارطة
 
-**Tunisian card games online, with friends.** Karta starts with **Chkobba** (شكبّة), Tunisia's favourite café game, played on a cartoon 3D terrace in Sidi Bou Said. Rami and Belote are planned next.
+**Tunisian card games online, with friends.** Karta has **Chkobba** (شكبّة), Tunisia's favourite café game, and **Belote** (بلوت), the trick-taking game of the cafés, played on a cartoon 3D terrace in Sidi Bou Said. Rami is planned next.
 
-- **1 vs 1 or 2 vs 2.** In 2 vs 2, partners sit opposite each other.
+- **Two games, one table.** Pick Chkobba or Belote on the home screen; the host can switch games in the lobby.
+- **1 vs 1 or 2 vs 2** for Chkobba; Belote is played 2 vs 2. Partners sit opposite each other.
 - **Private tables.** Create a table and invite friends with a share link (`/room/ABCDE`) or the 5-letter code.
 - **Spectators.** Anyone can watch with the link (`?watch=1`), or by joining a full table. Spectators can rotate the view and take over a bot's seat or an away player's seat.
 - **Voice chat.** Peer-to-peer WebRTC voice for players and spectators, with mute, deafen, per-person volume, push-to-talk (hold **V**), and avatar mouths that move when people talk.
-- **Bots** in three levels (easy, normal, hard) to fill empty seats. A bot also plays for anyone who drops out, until they reconnect.
+- **Bots** in three levels (easy, normal, hard) to fill empty seats, in both games. A bot also plays for anyone who drops out, until they reconnect.
 - **Your café persona.** Pick who you are at the table: eight regulars (El Hajj in his red chechia, the bald café boss in shades, a grandma in her polka-dot headscarf, a curly-haired student…) with a skin tone and a shirt colour, or one of **the crew**, nine friends drawn after their own avatars: Rafaa, NiNi Nina, Tha3loub, ta7foun, Sn0opr, Bou3ish, 7saan, habboub and Gratos, each with their own hair, beard, glasses and clothes at the table and their picture in the menus. Picking one of the crew also gives you their name, unless you typed your own; bots stick to the regulars. Then order: an express, a tea with pine nuts, a Coke, or a chicha that stands beside your chair. Tap your drink on the table (or press **D**) to take a sip or a puff, with real drinking sounds; everyone at the table sees and hears it, and bots sip theirs now and then.
 - **Quality of life:** an optional turn timer, reconnecting to your seat after a refresh, text chat, quick Tunisian reactions ("Ya3tik sa77a!", "Mabrouk!"), a rules screen, and procedural sound effects (darbuka on a chkobba!).
-- **All art is drawn in code.** Card faces (figures wearing a chechia, a golden 7♦), the terrace, the avatars (the crew's included) and the drinks need no external assets. The exceptions are the crew's portraits in `src/client/assets/crew/` (cropped from their avatars, for the menus) and the four drinking recordings in `src/client/assets/sounds/` (each holds several sips; the game finds them by loudness and plays one per tap). Sound effects are synthesized.
+- **All art is drawn in code.** Card faces (figures wearing a chechia, a golden 7♦, and the 8, 9 and 10 of the Belote deck), the trump token, the terrace, the avatars (the crew's included) and the drinks need no external assets. The exceptions are the crew's portraits in `src/client/assets/crew/` (cropped from their avatars, for the menus) and the four drinking recordings in `src/client/assets/sounds/` (each holds several sips; the game finds them by loudness and plays one per tap). Sound effects are synthesized.
 
 ## Chkobba rules implemented
 
@@ -25,6 +26,21 @@ At the end of each hand, one point each goes to:
 
 Each chkobba adds one more point. Games go to 11, 21 or 31. If both sides reach the target, the higher score wins; a tie plays another hand.
 
+## Belote rules implemented
+
+Tunisian Belote, as Tunisian cafés play it: *belote coinchée* with the Tunisian scale. 32 cards (7 to Ace), four players in two teams, partners opposite. Play goes anticlockwise and the deal passes to the right. The rules follow the ones collected and checked with Tunisian players by the [Kaboot Dineri](https://github.com/othmansouhayl/belote) project, without its house rules (see below).
+
+- **Deal:** 8 cards each, in two lots of 4; no card is turned up.
+- **Auction:** from the dealer's right, each player bids a value and a trump suit — 90 to 160 in tens, or **Kabbout** (كبوط: all eight tricks), the highest bid — or passes. Each bid must beat the last; a player may bid again after passing, and may overbid their partner. The other team may say **contre** (×2) to the best bid; the bidders may then answer **surcontre** (×4), which ends the auction. Three passes after a bid end it; four passes with no bid and the next dealer deals again.
+- **Play:** the player on the dealer's right leads. You must follow suit; on a trump lead you must beat the best trump if you can. If you cannot follow suit and your partner is winning the trick, you may play anything — unless you hold nothing but trumps, then you must beat the best trump if you can; otherwise you must trump — overtrumping if you can, with a lower trump if you can't. Trumps rank J 9 A 10 K Q 8 7 (20, 14, 11, 10, 4, 3, 0, 0 points), other suits A 10 K Q J 9 8 7 (11, 10, 4, 3, 2, 0, 0, 0); the last trick is worth 10 more, 162 in all.
+- **Belote / Rebelote:** King and Queen of trumps in one hand, 20 points, called as they are played. They count toward the contract and are never doubled. No other announcements.
+- **Scoring:** each team's card points are rounded to the ten (5 and up rounds up: 96/66 make 100/70), then the belote is added. The bidders must make their bid **and** more than the other team; then each team scores what it made, or 250 for the bidders if they took every trick. Otherwise it is a **chute**: the other team scores 160 (plus the belote, whoever held it). A Kabbout is worth 500, won or lost. After a contre, a contract made scores 160 ×2 (×4 after surcontre; 250 ×2 or ×4 with every trick) for the bidders, a failed one the same for the other team, the belote added undoubled.
+- **Thrown in:** as soon as the bid can no longer be made — even winning every trick left — the cards are thrown in and the chute is scored; a Kabbout is lost with the first trick the other team wins.
+
+Games go to 1000, 1500 (the default) or 2000; if both teams reach the target, the higher total wins, and a tie plays another hand. Players can look at the last trick at any time.
+
+Left out, as house rules of one town: the "stolen colour" win, minimum bids that depend on the trumps held, bid timers, claiming the remaining tricks, playing a lone legal card automatically, and matches of several games.
+
 ## Run it
 
 ```bash
@@ -35,7 +51,7 @@ npm run dev          # game server on :3000 + Vite on :5173 (proxied)
 Open http://localhost:5173, create a table, and open the invite link in another browser (or a private window) to play against yourself. You can also add bots. Dev-only sheets: `/card-preview.html` (card art) and `/avatar-preview.html` (every crew member's portrait beside their 3D figure).
 
 ```bash
-npm test             # rules engine, bots, and a multiplayer server suite over real sockets
+npm test             # rules engines, bots, layouts, and a multiplayer server suite over real sockets (both games)
 npm run typecheck
 npm run build        # client → dist/client, server → dist/server
 npm start            # production server (serves the client too) on $PORT (default 3000)
@@ -76,13 +92,14 @@ Voice audio flows directly between browsers (a mesh, up to 12 people per table).
 ## How it's built
 
 ```
-src/shared/   rules engine (chkobba.ts), deck (cards.ts), bots (bot.ts), socket protocol (protocol.ts)
-src/server/   Express + Socket.IO: rooms, seats, spectators, game flow, timers, bots, voice signaling
+src/shared/   rules engines (chkobba.ts, belote.ts), decks (cards.ts), bots (bot.ts, beloteBot.ts), socket protocol (protocol.ts)
+src/server/   Express + Socket.IO: rooms, seats, spectators, game flow, timers, bots, voice signaling; each game
+              plugs into the room through tables.ts
 src/client/
   game3d/     Three.js scene: terrace, table, card meshes and art, avatars and characters (the crew's beards,
               hair, glasses and outfits in features.ts and outfits.ts), drinks and smoke, animation system,
-              board controller, portrait renderer for the café menu
-  ui/         DOM overlay: home, lobby, café menu, HUD, name tags, results, chat, reactions, voice panel
+              board controller (Chkobba captures, Belote auction and tricks), trump token, portrait renderer
+  ui/         DOM overlay: home, lobby, café menu, HUD, name tags, bidding, results, chat, reactions, voice panel
   voice.ts    WebRTC mesh voice chat
   sfx.ts      WebAudio procedural sound effects (drinkAudio.ts plays the drinking recordings)
 test/         vitest: engine, bots, end-to-end server tests with socket.io-client

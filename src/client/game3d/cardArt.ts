@@ -1,6 +1,6 @@
 /**
- * Karta card artwork — pure Canvas-2D drawing for the 40-card Tunisian deck (Chkobba)
- * and the card back. No images and no network: everything is vector paths, gradients
+ * Karta card artwork — pure Canvas-2D drawing for the 40-card Tunisian deck (Chkobba),
+ * the 32-card Belote deck (7 to Ace) and the card back. No images and no network: everything is vector paths, gradients
  * and the app's @fontsource faces ("Lilita One" / "Fredoka") for numerals.
  *
  * Every measurement is relative to the card size (w × h), so the same code renders
@@ -9,8 +9,46 @@
  * Art direction: modern cartoon, cream paper, ink outlines (#1d1b2e), Sidi Bou Said blue,
  * gold accents, khatem (8-pointed star) ornaments, chechia-wearing court figures.
  */
-import type { Card, Suit } from '../../shared/cards';
-import { rankLabel } from '../../shared/cards';
+import { type Card, type Suit, parseCard } from '../../shared/cards';
+import { type BCard, isBeloteCardId, parseBeloteCard } from '../../shared/belote';
+
+// ------------------------------------------------------------------ faces ---
+export type FaceRank = 'A' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '10' | 'J' | 'Q' | 'K';
+
+/** What a card face shows. Both games' cards map onto it. */
+export interface CardFace {
+  suit: Suit;
+  rank: FaceRank;
+  /** Chkobba figures carry their value (Q 8, J 9, K 10) on a gold coin under the index. */
+  coin?: number;
+  /** Chkobba's golden 7♦, Sab'a el Haya. */
+  golden?: boolean;
+}
+
+export function chkobbaFace(card: Card): CardFace {
+  const figures: Partial<Record<number, FaceRank>> = { 1: 'A', 8: 'Q', 9: 'J', 10: 'K' };
+  return {
+    suit: card.suit,
+    rank: figures[card.rank] ?? (String(card.rank) as FaceRank),
+    coin: card.rank >= 8 ? card.rank : undefined,
+    golden: card.rank === 7 && card.suit === 'D',
+  };
+}
+
+export function beloteFace(card: BCard): CardFace {
+  return { suit: card.suit, rank: card.rank };
+}
+
+/** The face of a card of either game, from its id (Chkobba's "7D", Belote's "D7"). */
+export function faceOf(id: string): CardFace {
+  return isBeloteCardId(id) ? beloteFace(parseBeloteCard(id)) : chkobbaFace(parseCard(id));
+}
+
+/** Pips on a number card (0 for the ace and the figures). */
+function pipCount(face: CardFace): number {
+  const n = Number(face.rank);
+  return Number.isInteger(n) && n >= 2 ? n : 0;
+}
 
 /** Card width / height. */
 export const CARD_ASPECT = 2 / 3;
@@ -405,6 +443,14 @@ const RT = 0.205;
 const RU = 0.3525;
 const RM = 0.5;
 const RB = 0.795;
+// Belote's 8, 9 and 10: columns a little wider apart, four rows of pips, the centre ones in between.
+const WL = 0.325;
+const WR = 0.675;
+const R4 = (RB - RT) / 3;
+const R2 = RT + R4;
+const R3 = RB - R4;
+const RC1 = RT + R4 / 2;
+const RC2 = RB - R4 / 2;
 const PIP_LAYOUTS: Readonly<Record<number, ReadonlyArray<readonly [number, number]>>> = {
   2: [[PC, RT], [PC, RB]],
   3: [[PC, RT], [PC, RM], [PC, RB]],
@@ -412,7 +458,14 @@ const PIP_LAYOUTS: Readonly<Record<number, ReadonlyArray<readonly [number, numbe
   5: [[PL, RT], [PR, RT], [PC, RM], [PL, RB], [PR, RB]],
   6: [[PL, RT], [PR, RT], [PL, RM], [PR, RM], [PL, RB], [PR, RB]],
   7: [[PL, RT], [PR, RT], [PC, RU], [PL, RM], [PR, RM], [PL, RB], [PR, RB]],
+  8: [[WL, RT], [WR, RT], [PC, RU], [WL, RM], [WR, RM], [PC, 1 - RU], [WL, RB], [WR, RB]],
+  9: [[WL, RT], [WR, RT], [WL, R2], [WR, R2], [PC, RM], [WL, R3], [WR, R3], [WL, RB], [WR, RB]],
+  10: [[WL, RT], [WR, RT], [PC, RC1], [WL, R2], [WR, R2], [WL, R3], [WR, R3], [PC, RC2], [WL, RB], [WR, RB]],
 };
+/** Pip size per count (fractions of w): the crowded cards get slightly smaller pips. */
+function pipSize(count: number): number {
+  return count >= 9 ? 0.168 : count === 8 ? 0.176 : PIP;
+}
 
 // ------------------------------------------------------------ paper & index ---
 function drawPaper(ctx: Ctx, w: number, h: number, golden: boolean): void {
@@ -520,8 +573,8 @@ function drawCoin(ctx: Ctx, cx: number, cy: number, r: number, text: string): vo
   ctx.fill();
 }
 
-function drawIndex(ctx: Ctx, card: Card, w: number): void {
-  const label = rankLabel(card.rank);
+function drawIndex(ctx: Ctx, card: CardFace, w: number): void {
+  const label = card.rank;
   const cx = IDX_X * w;
   const capTop = IDX_TOP * w;
   const capH = IDX_CAP * w;
@@ -538,20 +591,21 @@ function drawIndex(ctx: Ctx, card: Card, w: number): void {
   const pipY = capTop + capH + gap + pipS / 2;
   drawSuit(ctx, card.suit, cx, pipY, pipS);
 
-  if (card.rank >= 8) {
+  if (card.coin !== undefined) {
     const r = COIN_R * w;
-    drawCoin(ctx, cx, pipY + pipS / 2 + COIN_GAP * w + r, r, String(card.rank));
-  } else if (card.rank === 7 && card.suit === 'D') {
+    drawCoin(ctx, cx, pipY + pipS / 2 + COIN_GAP * w + r, r, String(card.coin));
+  } else if (card.golden) {
     const r = w * 0.055;
     drawTwinkle(ctx, cx, pipY + pipS / 2 + COIN_GAP * w + r, r, Math.max(0.5, w * 0.004));
   }
 }
 
 // ------------------------------------------------------------- pip cards ---
-function drawPipCard(ctx: Ctx, card: Card, w: number, h: number): void {
-  const layout = PIP_LAYOUTS[card.rank] ?? [];
-  const size = PIP * w;
-  const haya = card.rank === 7 && card.suit === 'D';
+function drawPipCard(ctx: Ctx, card: CardFace, w: number, h: number): void {
+  const count = pipCount(card);
+  const layout = PIP_LAYOUTS[count] ?? [];
+  const size = pipSize(count) * w;
+  const haya = !!card.golden;
   if (haya) drawGoldenGlow(ctx, w, h);
   for (const [fx, fy] of layout) {
     const x = fx * w;
@@ -618,7 +672,7 @@ function drawGoldenGlow(ctx: Ctx, w: number, h: number): void {
 }
 
 // ------------------------------------------------------------------ aces ---
-function drawAce(ctx: Ctx, card: Card, w: number, h: number): void {
+function drawAce(ctx: Ctx, card: CardFace, w: number, h: number): void {
   const cx = w / 2;
   const cy = h / 2;
   const lw = Math.max(0.8, w * 0.009);
@@ -882,7 +936,7 @@ function archPath(ctx: Ctx, cx: number, arcCy: number, r: number, halfW: number,
   ctx.closePath();
 }
 
-function drawFigureCard(ctx: Ctx, card: Card, w: number, h: number): void {
+function drawFigureCard(ctx: Ctx, card: CardFace, w: number, h: number): void {
   const P = figurePanel(w, h);
   const lw = Math.max(0.8, w * 0.0095);
   const outerR = P.r + P.frame;
@@ -942,8 +996,8 @@ function drawFigureCard(ctx: Ctx, card: Card, w: number, h: number): void {
 
   const pen = new Pen(ctx, hx, hy, u, lw);
   const cloth = CLOTH[card.suit];
-  if (card.rank === 10) drawKing(pen, cloth, card.suit);
-  else if (card.rank === 8) drawQueen(pen, cloth, card.suit);
+  if (card.rank === 'K') drawKing(pen, cloth, card.suit);
+  else if (card.rank === 'Q') drawQueen(pen, cloth, card.suit);
   else drawJack(pen, cloth, card.suit);
 
   // inner shadow along the opening
@@ -1431,17 +1485,16 @@ function drawJack(p: Pen, cl: Cloth, suit: Suit): void {
 
 // ------------------------------------------------------------- public API ---
 /** Draws a card face into (0,0)–(w,h) of the current transform. Corners stay transparent. */
-export function drawCardFace(ctx: CanvasRenderingContext2D, card: Card, w: number, h: number): void {
+export function drawCardFace(ctx: CanvasRenderingContext2D, card: CardFace, w: number, h: number): void {
   ctx.save();
   ctx.clearRect(0, 0, w, h);
   cardPath(ctx, w, h);
   ctx.clip();
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
-  const haya = card.rank === 7 && card.suit === 'D';
-  drawPaper(ctx, w, h, haya);
-  if (card.rank === 1) drawAce(ctx, card, w, h);
-  else if (card.rank <= 7) drawPipCard(ctx, card, w, h);
+  drawPaper(ctx, w, h, !!card.golden);
+  if (card.rank === 'A') drawAce(ctx, card, w, h);
+  else if (pipCount(card) > 0) drawPipCard(ctx, card, w, h);
   else drawFigureCard(ctx, card, w, h);
 
   drawIndex(ctx, card, w);
@@ -1684,7 +1737,7 @@ function drawStarCrossTiles(ctx: Ctx, cx: number, cy: number, L: number, w: numb
 }
 
 /** Creates a canvas with the card drawn on it (default 320 px wide, height = width / CARD_ASPECT). */
-export function makeCardCanvas(card: Card | 'back', width = 320): HTMLCanvasElement {
+export function makeCardCanvas(card: CardFace | 'back', width = 320): HTMLCanvasElement {
   const w = Math.max(1, Math.round(width));
   const h = Math.max(1, Math.round(w / CARD_ASPECT));
   const canvas = document.createElement('canvas');

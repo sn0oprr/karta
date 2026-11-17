@@ -1,28 +1,22 @@
-import type { Card } from '../../shared/cards';
+import { suitSymbol } from '../../shared/cards';
 import type { RoundResult, Team } from '../../shared/chkobba';
+import { type BeloteRoundResult, contractLabel } from '../../shared/belote';
 import type { RoomView } from '../../shared/protocol';
-import { cardCanvas } from '../game3d/cardMesh';
+import { teamOf } from '../../shared/teams';
 import { sfx } from '../sfx';
 import { h, modal, type ModalHandle } from './dom';
 import { teamNames } from './hud';
+import { miniCard } from './miniCard';
 
-export function miniCard(card: Card | string, w = 44): HTMLCanvasElement {
-  const id = typeof card === 'string' ? card : card.id;
-  const src = cardCanvas(id);
-  const c = document.createElement('canvas');
-  const scale = Math.min(2, window.devicePixelRatio || 1);
-  c.width = Math.round(w * scale);
-  c.height = Math.round(w * 1.5 * scale);
-  c.className = 'mini-card';
-  c.style.width = `${w}px`;
-  c.style.height = `${w * 1.5}px`;
-  c.getContext('2d')!.drawImage(src, 0, 0, c.width, c.height);
-  return c;
-}
+export { miniCard };
 
 function sideLabel(room: RoomView, team: number): string {
   if (room.seats.length === 2) return room.seats[team]?.name ?? (team === 0 ? 'A' : 'B');
   return teamNames(room, team);
+}
+
+function seatName(room: RoomView, seat: number): string {
+  return seat === room.you.seat ? 'You' : (room.seats[seat]?.name ?? '?');
 }
 
 export interface ResultsActions {
@@ -68,68 +62,18 @@ export class ResultsView {
     if (key !== this.shownFor) {
       this.close();
       this.shownFor = key;
-      this.open(room, g.lastRound);
+      this.open(room);
     }
     this.refreshReady();
   }
 
-  private open(room: RoomView, r: RoundResult) {
+  private open(room: RoomView) {
+    const g = room.game!;
+    const r = g.lastRound!;
     const over = room.phase === 'gameOver';
     const my = room.you.seat;
-    const myTeam: Team | null = my === null ? null : ((my % 2) as Team);
+    const myTeam: Team | null = my === null ? null : teamOf(my);
     const isHost = room.hostId === room.you.id;
-
-    const winCell = (t: Team | null, team: Team, content: (string | HTMLElement)[]) =>
-      h('td', { class: t === team ? 'win' : '' }, h('span', { class: 'cell' }, ...content, t === team ? h('span', { class: 'point' }, '+1') : null));
-
-    let delay = 0;
-    const row = (cat: string, sub: string, cells: HTMLElement[]) => {
-      const tr = h('tr', null, h('td', null, h('div', { class: 'cat' }, cat, h('small', null, sub))), ...cells);
-      for (const td of Array.from(tr.children) as HTMLElement[]) td.style.animationDelay = `${delay}ms`;
-      delay += 140;
-      return tr;
-    };
-
-    const s = r.stats;
-    const haya = (t: Team) => (s[t].haya ? [miniCard('7D', 26)] : ['—']);
-    const table = h(
-      'table',
-      { class: 'results' },
-      h(
-        'thead',
-        null,
-        h(
-          'tr',
-          null,
-          h('th', null, ''),
-          h('th', { style: { color: 'var(--team-a)' } }, sideLabel(room, 0)),
-          h('th', { style: { color: 'var(--team-b)' } }, sideLabel(room, 1)),
-        ),
-      ),
-      h(
-        'tbody',
-        null,
-        row('Karta', 'most cards', [winCell(r.karta, 0, [String(s[0].cards)]), winCell(r.karta, 1, [String(s[1].cards)])]),
-        row('Dinari', 'most diamonds ♦', [winCell(r.dinari, 0, [String(s[0].diamonds)]), winCell(r.dinari, 1, [String(s[1].diamonds)])]),
-        row('Bermila', 'most 7s (then 6s)', [
-          winCell(r.bermila, 0, [`${s[0].sevens}×7 · ${s[0].sixes}×6`]),
-          winCell(r.bermila, 1, [`${s[1].sevens}×7 · ${s[1].sixes}×6`]),
-        ]),
-        row("Sab'a el Haya", 'the 7 of diamonds', [winCell(r.haya, 0, haya(0)), winCell(r.haya, 1, haya(1))]),
-        row('Chkobba', 'table sweeps', [
-          h('td', { class: s[0].chkobbas ? 'win' : '' }, String(s[0].chkobbas), s[0].chkobbas ? h('span', { class: 'point', style: 'margin-left:6px' }, `+${s[0].chkobbas}`) : null),
-          h('td', { class: s[1].chkobbas ? 'win' : '' }, String(s[1].chkobbas), s[1].chkobbas ? h('span', { class: 'point', style: 'margin-left:6px' }, `+${s[1].chkobbas}`) : null),
-        ]),
-      ),
-    );
-
-    const totals = h(
-      'div',
-      { class: 'totals' },
-      h('div', { class: 't a' }, h('div', { class: 'n' }, String(r.totals[0])), h('div', { class: 'plus' }, `+${r.points[0]}`)),
-      h('div', { class: 'vs' }, `of ${room.settings.targetScore}`),
-      h('div', { class: 't b' }, h('div', { class: 'n' }, String(r.totals[1])), h('div', { class: 'plus' }, `+${r.points[1]}`)),
-    );
 
     const content = h('div');
     if (over && r.winner !== null) {
@@ -140,18 +84,38 @@ export class ResultsView {
         h('div', { class: 'muted', style: 'text-align:center;margin-bottom:8px' }, `Final score ${r.totals[0]} – ${r.totals[1]}`),
       );
       sfx.play(won || myTeam === null ? 'win' : 'lose');
-    } else {
-      content.append(h('h2', null, `Hand ${r.round} — results`));
-    }
-    content.append(table, totals);
-    if (r.leftoverTo !== null && r.leftover.length) {
+    } else if (g.kind === 'belote' && g.lastRound) {
+      const { contract, coinche } = g.lastRound;
+      content.append(
+        h(
+          'h2',
+          null,
+          `Hand ${r.round} — ${seatName(room, contract.seat)} bid ${contract.value === 'kabbout' ? 'Kabbout' : contract.value} `,
+          h('span', { class: `suit-${contract.suit}` }, suitSymbol(contract.suit)),
+          coinche > 1 ? ` ×${coinche}` : '',
+        ),
+      );
+    } else content.append(h('h2', null, `Hand ${r.round} — results`));
+
+    if (g.kind === 'belote' && g.lastRound) content.append(...this.beloteBody(room, g.lastRound));
+    else if (g.kind === 'chkobba' && g.lastRound) content.append(...this.chkobbaBody(room, g.lastRound));
+
+    content.append(
+      h(
+        'div',
+        { class: 'totals' },
+        h('div', { class: 't a' }, h('div', { class: 'n' }, String(r.totals[0])), h('div', { class: 'plus' }, `+${r.points[0]}`)),
+        h('div', { class: 'vs' }, `of ${room.settings.targetScore}`),
+        h('div', { class: 't b' }, h('div', { class: 'n' }, String(r.totals[1])), h('div', { class: 'plus' }, `+${r.points[1]}`)),
+      ),
+    );
+    if (g.kind === 'chkobba' && g.lastRound && g.lastRound.leftoverTo !== null && g.lastRound.leftover.length) {
+      const c = g.lastRound;
       content.append(
         h(
           'div',
           { class: 'muted', style: 'text-align:center' },
-          `${r.leftoverTo === room.you.seat ? 'You' : (room.seats[r.leftoverTo]?.name ?? '?')} took ${
-            r.leftover.length > 1 ? `the last ${r.leftover.length} cards` : 'the last card'
-          } left on the table.`,
+          `${seatName(room, c.leftoverTo!)} took ${c.leftover.length > 1 ? `the last ${c.leftover.length} cards` : 'the last card'} left on the table.`,
         ),
       );
     }
@@ -189,6 +153,105 @@ export class ResultsView {
 
     this.handle = modal(content, { dismissable: false });
     if (!over) this.timer = setInterval(() => this.refreshReady(), 250);
+  }
+
+  /** Rows are revealed one after the other. */
+  private rows() {
+    let delay = 0;
+    return (cat: string, sub: string, cells: HTMLElement[]) => {
+      const tr = h('tr', null, h('td', null, h('div', { class: 'cat' }, cat, h('small', null, sub))), ...cells);
+      for (const td of Array.from(tr.children) as HTMLElement[]) td.style.animationDelay = `${delay}ms`;
+      delay += 140;
+      return tr;
+    };
+  }
+
+  private table(room: RoomView, rows: HTMLElement[]): HTMLElement {
+    return h(
+      'table',
+      { class: 'results' },
+      h(
+        'thead',
+        null,
+        h(
+          'tr',
+          null,
+          h('th', null, ''),
+          h('th', { style: { color: 'var(--team-a)' } }, sideLabel(room, 0)),
+          h('th', { style: { color: 'var(--team-b)' } }, sideLabel(room, 1)),
+        ),
+      ),
+      h('tbody', null, ...rows),
+    );
+  }
+
+  private chkobbaBody(room: RoomView, r: RoundResult): HTMLElement[] {
+    const winCell = (t: Team | null, team: Team, content: (string | HTMLElement)[]) =>
+      h('td', { class: t === team ? 'win' : '' }, h('span', { class: 'cell' }, ...content, t === team ? h('span', { class: 'point' }, '+1') : null));
+    const row = this.rows();
+    const s = r.stats;
+    const haya = (t: Team) => (s[t].haya ? [miniCard('7D', 26)] : ['—']);
+    return [
+      this.table(room, [
+        row('Karta', 'most cards', [winCell(r.karta, 0, [String(s[0].cards)]), winCell(r.karta, 1, [String(s[1].cards)])]),
+        row('Dinari', 'most diamonds ♦', [winCell(r.dinari, 0, [String(s[0].diamonds)]), winCell(r.dinari, 1, [String(s[1].diamonds)])]),
+        row('Bermila', 'most 7s (then 6s)', [
+          winCell(r.bermila, 0, [`${s[0].sevens}×7 · ${s[0].sixes}×6`]),
+          winCell(r.bermila, 1, [`${s[1].sevens}×7 · ${s[1].sixes}×6`]),
+        ]),
+        row("Sab'a el Haya", 'the 7 of diamonds', [winCell(r.haya, 0, haya(0)), winCell(r.haya, 1, haya(1))]),
+        row('Chkobba', 'table sweeps', [
+          h('td', { class: s[0].chkobbas ? 'win' : '' }, String(s[0].chkobbas), s[0].chkobbas ? h('span', { class: 'point', style: 'margin-left:6px' }, `+${s[0].chkobbas}`) : null),
+          h('td', { class: s[1].chkobbas ? 'win' : '' }, String(s[1].chkobbas), s[1].chkobbas ? h('span', { class: 'point', style: 'margin-left:6px' }, `+${s[1].chkobbas}`) : null),
+        ]),
+      ]),
+    ];
+  }
+
+  private beloteBody(room: RoomView, r: BeloteRoundResult): HTMLElement[] {
+    const row = this.rows();
+    const takers = teamOf(r.contract.seat);
+    const defence: Team = takers === 0 ? 1 : 0;
+    const winners = r.outcome === 'made' ? takers : defence;
+    const kabbout = r.contract.value === 'kabbout';
+    const cell = (text: string, win = false) => h('td', { class: win ? 'win' : '' }, text);
+    const cards = (t: Team) => {
+      const tricks = `${r.tricks[t]} trick${r.tricks[t] === 1 ? '' : 's'}`;
+      return h('td', { class: r.capot === t ? 'win' : '' }, h('span', { class: 'cell stack' }, String(r.cardPoints[t]), h('small', { class: 'cell-sub' }, r.capot === t ? 'capot!' : tricks)));
+    };
+    const played = r.tricks[0] + r.tricks[1];
+    const rows = [
+      row('Cards', r.early ? `thrown in after ${played} trick${played === 1 ? '' : 's'}` : 'trick points · 10 for the last', [cards(0), cards(1)]),
+      row('Rounded', 'to the nearest ten', [cell(String(r.rounded[0])), cell(String(r.rounded[1]))]),
+      row('Belote', 'king & queen of trumps', [cell(r.belote === 0 ? '20' : '—', r.belote === 0), cell(r.belote === 1 ? '20' : '—', r.belote === 1)]),
+      row('Made', kabbout ? 'Kabbout: every trick' : `${r.contract.value} needed, and more than the others`, [
+        cell(String(r.made[0]), winners === 0),
+        cell(String(r.made[1]), winners === 1),
+      ]),
+    ];
+
+    const verdict = h('div', { class: `verdict ${r.outcome}` });
+    const taker = seatName(room, r.contract.seat);
+    const label = `${contractLabel(r.contract)}${r.coinche > 1 ? ` ×${r.coinche}` : ''}`;
+    const defenders = sideLabel(room, defence);
+    const scores = (t: Team) => `${sideLabel(room, t)} +${r.points[t]}`;
+    const value = r.contract.value;
+    if (value === 'kabbout') {
+      verdict.append(r.outcome === 'made' ? `🎉 Kabbout! ${taker} took every trick: ${scores(takers)}.` : `💥 Kabbout lost — ${defenders} won a trick: ${scores(defence)}.`);
+    } else if (r.outcome === 'failed') {
+      const why = r.early ? 'and could no longer make it' : r.made[takers] >= value ? `but not more than ${r.made[defence]}` : `but made ${r.made[takers]}`;
+      verdict.append(`💥 Chute! ${taker} bid ${label} ${why}: ${scores(defence)}.`);
+      verdict.append(h('div', { class: 'muted' }, `A failed contract gives the other team 160${r.coinche > 1 ? ` × ${r.coinche}` : ''}${r.belote !== null ? ', and the belote' : ''}.`));
+    } else if (r.capot === takers && r.coinche === 1) {
+      verdict.append(`🎉 Capot! ${taker} bid ${label} and took every trick: ${scores(takers)}.`);
+    } else if (r.coinche > 1) {
+      verdict.append(`✓ ${taker} made ${label}, ${r.made[takers]} to ${r.made[defence]}: ${scores(takers)}.`);
+      verdict.append(h('div', { class: 'muted' }, `A contract made after a contre scores ${r.capot === takers ? 250 : 160} × ${r.coinche}${r.belote !== null ? ', and the belote' : ''}.`));
+    } else {
+      verdict.append(`✓ ${taker} made ${label}: ${r.made[takers]} to ${r.made[defence]}.`);
+      verdict.append(h('div', { class: 'muted' }, 'Each team scores what it made.'));
+    }
+    return [this.table(room, rows), verdict];
   }
 
   private refreshReady() {

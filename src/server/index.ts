@@ -77,6 +77,7 @@ export async function startServer(opts: { port?: number; staticDir?: string | nu
     res.json({
       ok: true,
       code: room.code,
+      game: room.settings.game,
       mode: room.settings.mode,
       phase: room.phase,
       players: room.seats.filter(Boolean).length,

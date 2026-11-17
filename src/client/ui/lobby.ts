@@ -2,10 +2,12 @@ import { teamOf } from '../../shared/chkobba';
 import {
   AVATAR_COLORS,
   BOT_LEVELS,
+  GAMES,
+  GAME_INFO,
+  type GameKind,
   type PlayerInfo,
   type RoomSettings,
   type RoomView,
-  TARGET_SCORES,
   TURN_TIMERS,
   isCrew,
 } from '../../shared/protocol';
@@ -27,12 +29,13 @@ export function roomLink(code: string, spectate = false): string {
   return `${location.origin}/room/${code}${spectate ? '?watch=1' : ''}`;
 }
 
-export async function shareRoom(code: string) {
+export async function shareRoom(code: string, game: GameKind = 'chkobba') {
   const url = roomLink(code);
-  const text = `Join my Chkobba table on Karta! Code ${code}`;
+  const name = GAME_INFO[game].name;
+  const text = `Join my ${name} table on Karta! Code ${code}`;
   if (navigator.share && matchMedia('(pointer: coarse)').matches) {
     try {
-      await navigator.share({ title: 'Karta · Chkobba', text, url });
+      await navigator.share({ title: `Karta · ${name}`, text, url });
       return;
     } catch {
       /* cancelled → fall back to copy */
@@ -92,7 +95,7 @@ export class Lobby {
       h(
         'div',
         { class: 'room-code' },
-        h('div', null, h('div', { class: 'label' }, 'Table code'), h('div', { class: 'code' }, room.code)),
+        h('div', null, h('div', { class: 'label' }, `${GAME_INFO[room.settings.game].name} table`), h('div', { class: 'code' }, room.code)),
         h(
           'div',
           { class: 'row' },
@@ -102,7 +105,7 @@ export class Lobby {
               class: 'btn small blue',
               onclick: () => {
                 sfx.play('click');
-                void shareRoom(room.code);
+                void shareRoom(room.code, room.settings.game);
               },
             },
             '🔗 Invite',
@@ -213,7 +216,7 @@ export class Lobby {
       spectators,
     );
 
-    const seg = <T extends string | number>(values: readonly T[], current: T, label: (v: T) => string, onPick: (v: T) => void) =>
+    const seg = <T extends string | number | boolean>(values: readonly T[], current: T, label: (v: T) => string, onPick: (v: T) => void) =>
       h(
         'div',
         { class: 'seg' },
@@ -235,6 +238,7 @@ export class Lobby {
       );
 
     const s = room.settings;
+    const info = GAME_INFO[s.game];
     const settingsCard = h(
       'div',
       { class: 'panel' },
@@ -242,10 +246,14 @@ export class Lobby {
       h(
         'div',
         { class: 'settings-grid' },
+        h('span', { class: 'label' }, 'Game'),
+        seg(GAMES, s.game, (v) => GAME_INFO[v].name, (v) => this.actions.settings({ game: v })),
         h('span', { class: 'label' }, 'Mode'),
-        seg(['1v1', '2v2'] as const, s.mode, (v) => (v === '1v1' ? '1 vs 1' : '2 vs 2'), (v) => this.actions.settings({ mode: v })),
+        info.modes.length > 1
+          ? seg(['1v1', '2v2'] as const, s.mode, (v) => (v === '1v1' ? '1 vs 1' : '2 vs 2'), (v) => this.actions.settings({ mode: v }))
+          : h('div', { class: 'seg' }, h('button', { class: 'on', disabled: true, title: `${info.name} is played by four, in two teams` }, '2 vs 2')),
         h('span', { class: 'label' }, 'Play to'),
-        seg(TARGET_SCORES, s.targetScore, (v) => String(v), (v) => this.actions.settings({ targetScore: v })),
+        seg(info.targets, s.targetScore, (v) => String(v), (v) => this.actions.settings({ targetScore: v })),
         h('span', { class: 'label' }, 'Turn timer'),
         seg(TURN_TIMERS, s.turnSeconds, (v) => (v === 0 ? 'Off' : `${v}s`), (v) => this.actions.settings({ turnSeconds: v })),
         h('span', { class: 'label' }, 'Bots'),

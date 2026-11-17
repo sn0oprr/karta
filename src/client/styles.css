@@ -463,6 +463,25 @@ select {
   opacity: 0.6;
 }
 
+button.game-tile {
+  width: 100%;
+  color: var(--ink);
+  cursor: pointer;
+  transition:
+    transform 0.08s ease,
+    box-shadow 0.08s ease,
+    background 0.15s ease;
+}
+
+button.game-tile:hover {
+  transform: translateY(-2px);
+}
+
+button.game-tile:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 var(--ink);
+}
+
 /* ───────────────────────────── lobby ───────────────────────────── */
 
 .lobby {
@@ -736,6 +755,47 @@ select {
 
 .score-mid .target {
   font-size: 1.05rem;
+}
+
+/* Belote: the contract between the scores, and a ring around the team that took. */
+.score-mid .contract {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  margin-top: 1px;
+  font-family: var(--font-title);
+  font-size: 0.95rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.score-mid .trump {
+  font-family: var(--font);
+  font-size: 1.3rem;
+  line-height: 1;
+}
+
+.score-mid .coinche {
+  margin-left: 2px;
+  padding: 0 3px;
+  border-radius: 4px;
+  background: var(--coral);
+  color: #fff;
+  font-size: 0.75rem;
+}
+
+.score-team.taker {
+  box-shadow: inset 0 0 0 3px var(--yellow);
+}
+
+.suit-H,
+.suit-D {
+  color: var(--red);
+}
+
+.suit-S,
+.suit-C {
+  color: var(--ink);
 }
 
 /* The banner's place is reserved whatever it says (the camera keeps the table cards out of it). */
@@ -1018,6 +1078,15 @@ select {
   display: inline-block;
 }
 
+.big-banner.coral .word {
+  color: var(--coral);
+}
+
+.big-banner.small .word {
+  font-size: clamp(2.4rem, 10vw, 5rem);
+  color: #fff;
+}
+
 .big-banner .who {
   margin-top: 6px;
   font-family: var(--font-title);
@@ -1188,6 +1257,43 @@ select {
   color: var(--ink-soft);
   font-weight: 600;
   margin-top: 8px;
+}
+
+/* Belote results */
+.results td .cell.stack {
+  flex-direction: column;
+  gap: 0;
+}
+
+.results .cell-sub {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  line-height: 1.2;
+}
+
+.verdict {
+  margin: 8px 0 2px;
+  padding: 8px 12px;
+  border: 2.5px solid var(--ink);
+  border-radius: 14px;
+  background: var(--paper);
+  text-align: center;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.verdict.made {
+  background: #e3f7df;
+}
+
+.verdict.failed {
+  background: #ffd6d6;
+}
+
+.verdict .muted {
+  font-weight: 600;
+  margin-top: 2px;
 }
 
 .winner-title {
@@ -1740,6 +1846,191 @@ select {
   background: #fff;
 }
 
+/* Belote card values in the rules */
+.rules .values {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 6px 0;
+}
+
+.rules .values > b {
+  font-family: var(--font-title);
+  font-weight: 400;
+  min-width: 6.2em;
+}
+
+.rules .value-row {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.rules .value {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 30px;
+  padding: 1px 4px;
+  border: 2px solid var(--ink);
+  border-radius: 8px;
+  background: #fff;
+  line-height: 1.1;
+}
+
+.rules .v-card {
+  font-family: var(--font-title);
+  font-size: 0.95rem;
+}
+
+.rules .v-pts {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--ink-soft);
+}
+
+/* Belote: the last trick, under the top bar on the right */
+.last-trick {
+  position: absolute;
+  top: calc(64px + var(--safe-top));
+  right: 10px;
+  padding: 8px 10px 10px;
+  z-index: 4;
+  animation: pop-in 0.25s cubic-bezier(0.2, 1.5, 0.4, 1) both;
+}
+
+.last-trick .label {
+  margin-bottom: 4px;
+}
+
+.last-trick-cards {
+  display: flex;
+  gap: 6px;
+}
+
+.lt-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  width: 52px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.lt-card span {
+  max-width: 52px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lt-card.win .mini-card {
+  outline: 3px solid var(--yellow-2);
+  outline-offset: 1px;
+}
+
+/* ───────────────────────────── Belote bidding ───────────────────────────── */
+
+/* Bottom right, clear of the players' faces and of the hand. */
+.bid-panel {
+  position: absolute;
+  right: 16px;
+  bottom: calc(86px + var(--safe-bottom));
+  width: 240px;
+  max-width: calc(100% - 24px);
+  padding: 12px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+  z-index: 6;
+  animation: bid-in 0.3s cubic-bezier(0.2, 1.5, 0.4, 1) both;
+}
+
+@keyframes bid-in {
+  from {
+    opacity: 0;
+    transform: translateX(30px) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.bid-title {
+  font-family: var(--font-title);
+  font-size: 1.4rem;
+  line-height: 1.1;
+}
+
+.bid-sub {
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--ink-soft);
+}
+
+.bid-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+/* The value to bid: − 110 + */
+.bid-stepper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.bid-stepper .bid-step {
+  min-width: 38px;
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+.bid-value {
+  min-width: 3.2em;
+  font-family: var(--font-title);
+  font-size: 1.8rem;
+  line-height: 1;
+}
+
+.bid-value.kabbout {
+  font-size: 1.35rem;
+  color: var(--red);
+}
+
+/* Clicking a suit bids the value in that suit. */
+.bid-actions.suits {
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+
+.bid-actions.suits .bid-suit {
+  --bg: #fff;
+  min-width: 46px;
+  padding: 0.25em 0.4em;
+  font-family: var(--font);
+  font-size: 1.45rem;
+  line-height: 1;
+}
+
+.bid-suit.red {
+  color: var(--red);
+}
+
+.bid-actions .chosen {
+  transform: translateY(3px);
+  box-shadow: 0 2px 0 var(--ink);
+}
+
 /* ───────────────────────────── animations ───────────────────────────── */
 
 @keyframes pop-in {
@@ -1776,6 +2067,30 @@ select {
     bottom: calc(24% + var(--safe-bottom));
     transform: translateX(50%);
     animation-name: chooser-in-mobile;
+  }
+
+  /* Just above the turn banner, clear of the trick in the middle of the table. */
+  .bid-panel {
+    right: 50%;
+    top: auto;
+    width: min(320px, calc(100% - 24px));
+    bottom: calc(20% + 52px + var(--safe-bottom));
+    transform: translateX(50%);
+    padding: 10px 12px 12px;
+    gap: 6px;
+    animation-name: chooser-in-mobile;
+  }
+
+  .bid-sub {
+    display: none;
+  }
+
+  .bid-title {
+    font-size: 1.15rem;
+  }
+
+  .bid-value {
+    font-size: 1.5rem;
   }
 
   @keyframes chooser-in-mobile {
@@ -2136,6 +2451,14 @@ select {
     font-size: 0.85rem;
   }
 
+  .score-mid .contract {
+    font-size: 0.75rem;
+  }
+
+  .score-mid .trump {
+    font-size: 1rem;
+  }
+
   .hud-bottom,
   .hud.in-lobby .hud-bottom {
     bottom: calc(8px + var(--safe-bottom));
@@ -2204,6 +2527,29 @@ select {
 
   .spectator-bar .chip {
     display: none;
+  }
+
+  .bid-panel {
+    bottom: calc(56px + var(--safe-bottom));
+    padding: 8px 10px 10px;
+    gap: 6px;
+  }
+
+  .bid-sub {
+    display: none;
+  }
+
+  .bid-title {
+    font-size: 1.1rem;
+  }
+
+  .bid-value {
+    font-size: 1.35rem;
+  }
+
+  .bid-actions.suits .bid-suit {
+    min-width: 42px;
+    font-size: 1.25rem;
   }
 
   .tag-pill {

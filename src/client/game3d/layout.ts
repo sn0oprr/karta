@@ -90,13 +90,36 @@ export const TABLE_SLOTS: Slot[] = (() => {
 
 // ───────────────────────────── hands ─────────────────────────────
 
+// ───────────────────────────── Belote tricks ─────────────────────────────
+
+/**
+ * Where a seat's card lies in the trick: a cross in the middle of the table, each card in front of its
+ * player and upright for the camera (near and far cards closer to the centre than the side ones).
+ */
+export function trickSlot(view: number, n: number): Slot {
+  const d = viewDir(view, n);
+  const r = Math.abs(d.z) > 0.5 ? 1.05 : 1.42;
+  return { pos: d.multiplyScalar(r), yaw: [-0.07, 0.1, 0.05, -0.11][view % 4]! };
+}
+
+/** The trump token, on the table at the taker's front left, between the trick and their stock spot. */
+export function trumpTokenPosition(view: number, n: number): THREE.Vector3 {
+  return viewDir(view, n).multiplyScalar(2.25).add(viewRight(view, n).multiplyScalar(-2.0));
+}
+
+/** Everywhere a Belote card lies in the middle of the table (the trick), with a margin. */
+export const BELOTE_CARD_EXTENT = { x: 1.42 + CARD_W / 2 + 0.15, z: 1.05 + CARD_H / 2 + 0.15 };
+
 /** Fanned layout for N cards held by an opponent (in the avatar's hand-anchor space). */
 export function heldCardTransform(i: number, count: number, out: { pos: THREE.Vector3; rot: THREE.Euler }) {
-  const spread = 0.5;
+  // Three cards fan wide; a bigger hand (Belote's eight) is held tighter.
+  const many = count > 3;
+  const spread = many ? Math.max(0.2, 1.45 / (count - 1)) : 0.5;
+  const turn = many ? 0.62 / (count - 1) : 0.16;
   const mid = (count - 1) / 2;
   const k = i - mid;
-  out.pos.set(k * spread * 0.95, -Math.abs(k) * 0.06, -i * 0.012);
-  out.rot.set(-0.25, 0, -k * 0.16, 'YXZ');
+  out.pos.set(k * spread * 0.95, -Math.abs(k) * (many ? 0.035 : 0.06), -i * 0.012);
+  out.rot.set(-0.25, 0, -k * turn, 'YXZ');
   return out;
 }
 
@@ -122,17 +145,36 @@ export function myHandTransform(
   const shown = short ? 0.52 : 0.9;
   let scale = (cardScreenH * halfH * 2) / CARD_H;
   const maxW = halfW * 2 * (portrait ? 0.86 : 0.42);
-  const spacing = CARD_W * scale * 1.04;
-  if (spacing * Math.max(count, 3) > maxW) scale *= maxW / (spacing * Math.max(count, 3));
-  const sp = CARD_W * scale * 1.04;
+  let sp: number;
+  if (count <= 3) {
+    const spacing = CARD_W * scale * 1.04;
+    if (spacing * Math.max(count, 3) > maxW) scale *= maxW / (spacing * Math.max(count, 3));
+    sp = CARD_W * scale * 1.04;
+  } else {
+    // A bigger hand (Belote's eight) overlaps like a hand of real cards, every card showing at least its
+    // corner index; only if even that is too wide do the cards shrink. On a phone held sideways the hand
+    // keeps to the width of three cards (the turn banner sits right of it).
+    const room = short ? Math.min(maxW, halfH * 2 * 0.6) : maxW;
+    const w = CARD_W * scale;
+    let step = (room / w - 1) / (count - 1);
+    if (step < HAND_MIN_STEP) {
+      scale *= room / (w * (1 + HAND_MIN_STEP * (count - 1)));
+      step = HAND_MIN_STEP;
+    }
+    sp = CARD_W * scale * Math.min(1.04, step);
+  }
+  const many = count > 3;
   const mid = (count - 1) / 2;
   const k = i - mid;
-  const y = -halfH + CARD_H * scale * (shown - 0.5) - Math.abs(k) * 0.06 * scale;
+  const y = -halfH + CARD_H * scale * (shown - 0.5) - Math.abs(k) * (many ? 0.025 : 0.06) * scale;
   out.pos.set(k * sp, y, -dist + i * 0.01);
-  out.rot.set(0.08, 0, -k * 0.045, 'YXZ');
+  out.rot.set(0.08, 0, -k * (many ? 0.028 : 0.045), 'YXZ');
   out.scale = scale;
   return out;
 }
+
+/** Overlapping hand cards show at least this share of their width (the corner index fits in it). */
+const HAND_MIN_STEP = 0.33;
 
 /** Screen box (CSS px) covered by a hand of `count` cards laid out by `myHandTransform`. */
 export function myHandRect(count: number, view: { width: number; height: number; fov: number }) {

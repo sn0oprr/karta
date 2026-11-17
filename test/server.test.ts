@@ -1,8 +1,13 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, onTestFinished } from 'vitest';
 import { io as ioClient, type Socket } from 'socket.io-client';
 import { legalMovesFor } from '../src/shared/chkobba';
+import { type AuctionCall, auctionOptions, legalCards } from '../src/shared/belote';
+import { SUITS } from '../src/shared/cards';
+import { DEFAULT_SETTINGS } from '../src/shared/protocol';
 import {
   type ChatMessage,
+  type ChkobbaView,
+  type GameView,
   type ClientToServer,
   type GameEvent,
   type RoomView,
@@ -15,6 +20,8 @@ import {
 } from '../src/shared/protocol';
 import { type KartaServer, startServer } from '../src/server/index';
 import { SIP_TIMING, TIMING } from '../src/server/room';
+import { createTable } from '../src/server/tables';
+import { seededRandom } from '../src/shared/cards';
 
 type ClientSocket = Socket<ServerToClient, ClientToServer>;
 
@@ -129,6 +136,43 @@ afterAll(async () => {
   await server.close();
 });
 
+/** What changes whenever someone acts. */
+function stateKey(g: GameView | null | undefined): string {
+  if (!g) return '';
+  return JSON.stringify(g.kind === 'chkobba' ? g.table : [g.trick, g.auction.length, g.stage, g.round, g.tricksWon]) + g.turn;
+}
+
+/** Plays a random legal action for `actor`, whatever the game. */
+async function randomAction(actor: TestClient) {
+  const g = actor.room!.game!;
+  const seat = actor.room!.you.seat!;
+  const before = actor.events.length;
+  if (g.kind === 'belote') {
+    if (g.stage === 'bidding') {
+      // Mostly passes, so that auctions end; now and then a bid, a Kabbout, a contre or a surcontre.
+      const o = auctionOptions(g, seat);
+      const calls: AuctionCall[] = [{ type: 'pass' }, { type: 'pass' }];
+      const suit = SUITS[Math.floor(Math.random() * SUITS.length)]!;
+      if (o.minBid !== null) calls.push({ type: 'bid', value: Math.min(160, o.minBid + 10 * Math.floor(Math.random() * 2)), suit });
+      if (o.kabbout && Math.random() < 0.05) calls.push({ type: 'bid', value: 'kabbout', suit });
+      if (o.contre && Math.random() < 0.3) calls.push({ type: 'contre' });
+      if (o.surcontre && Math.random() < 0.5) calls.push({ type: 'surcontre' });
+      const call = calls[Math.floor(Math.random() * calls.length)]!;
+      expect(await actor.call('bid', call)).toEqual({ ok: true });
+    } else {
+      const legal = legalCards(g.myHand!, g.trick, g.trump!, seat);
+      expect(legal.length).toBeGreaterThan(0);
+      expect(await actor.call('play', { cardId: legal[Math.floor(Math.random() * legal.length)]!.id })).toEqual({ ok: true });
+    }
+  } else {
+    const moves = legalMovesFor(g.myHand!, g.table);
+    expect(moves.length).toBeGreaterThan(0);
+    const move = moves[Math.floor(Math.random() * moves.length)]!;
+    expect(await actor.call('play', move)).toEqual({ ok: true });
+  }
+  await actor.waitFor(() => actor.events.length > before, 4000, 'action event');
+}
+
 async function playUntil(players: TestClient[], stop: () => boolean, maxSteps = 2000) {
   for (let step = 0; step < maxSteps && !stop(); step++) {
     // Everyone must have seen the same broadcast before deciding who acts.
@@ -146,22 +190,11 @@ async function playUntil(players: TestClient[], stop: () => boolean, maxSteps = 
     const actor = players.find((p) => p.room!.you.seat === turn);
     if (!actor) {
       // A bot (or autopilot) is to move: wait for the state to change.
-      const before = JSON.stringify(view.game!.table) + view.game!.turn;
-      await players[0]!.waitFor(
-        () => JSON.stringify(players[0]!.room!.game?.table) + players[0]!.room!.game?.turn !== before || players[0]!.room!.phase !== 'playing',
-        4000,
-        'bot move',
-      );
+      const before = stateKey(view.game);
+      await players[0]!.waitFor(() => stateKey(players[0]!.room!.game) !== before || players[0]!.room!.phase !== 'playing', 4000, 'bot move');
       continue;
     }
-    const g = actor.room!.game!;
-    const moves = legalMovesFor(g.myHand!, g.table);
-    expect(moves.length).toBeGreaterThan(0);
-    const move = moves[Math.floor(Math.random() * moves.length)]!;
-    const before = actor.events.length;
-    const res = await actor.call('play', move);
-    expect(res).toEqual({ ok: true });
-    await actor.waitFor(() => actor.events.length > before, 4000, 'play event');
+    await randomAction(actor);
   }
 }
 
@@ -232,6 +265,13 @@ describe('server', () => {
   }, 60_000);
 
   it('restores a seat and hand after reconnecting', async () => {
+    // Back within the grace period, so nobody plays for Eve meanwhile (the shrunk test timings would let the
+    // autopilot race her reconnection).
+    const grace = TIMING.autopilotGrace;
+    TIMING.autopilotGrace = 10_000;
+    onTestFinished(() => {
+      TIMING.autopilotGrace = grace;
+    });
     const a = client('dora-secret', 'Dora');
     const created = await a.call<{ ok: boolean; code: string }>('create', {});
     const code = created.code;
@@ -366,7 +406,7 @@ describe('server', () => {
     // Once the first player moves, the other one gets a deadline of their own.
     const first = a.room!.game!;
     const mover = first.turn === a.room!.you.seat ? a : b;
-    const g = mover.room!.game!;
+    const g = mover.room!.game as ChkobbaView;
     expect(await mover.call('play', legalMovesFor(g.myHand!, g.table)[0])).toEqual({ ok: true });
     const next = await a.waitFor(() => a.room!.game!.turn !== first.turn && a.room, 4000, 'next turn');
     expect(next.game!.turnDeadline).toBeGreaterThan(first.turnDeadline!);
@@ -446,5 +486,121 @@ describe('server', () => {
     } finally {
       Object.assign(SIP_TIMING, saved);
     }
+  });
+  it('switches a table to Belote: 2 vs 2, played to 1000, 1500 or 2000', async () => {
+    const host = client('belo-secret', 'Belo');
+    await host.call('create', { settings: { game: 'belote' } });
+    await host.waitFor(() => host.room?.settings.game === 'belote' && host.room.seats.length === 4, 4000, 'belote room');
+    expect(host.room!.settings).toMatchObject({ game: 'belote', mode: '2v2', targetScore: 1500 });
+    expect((await host.call('settings', { mode: '1v1' })).ok).toBe(false);
+    expect((await host.call('settings', { targetScore: 21 })).ok).toBe(false);
+    expect(await host.call('settings', { targetScore: 2000 })).toEqual({ ok: true });
+    await host.waitFor(() => host.room!.settings.targetScore === 2000, 4000, 'settings');
+    // Back to Chkobba: its own default target, and the table keeps its four seats.
+    expect(await host.call('settings', { game: 'chkobba' })).toEqual({ ok: true });
+    await host.waitFor(() => host.room!.settings.game === 'chkobba', 4000, 'chkobba');
+    expect(host.room!.settings).toMatchObject({ mode: '2v2', targetScore: 21 });
+    expect((await host.call('settings', { game: 'poker' })).ok).toBe(false);
+  });
+
+  it('plays a Belote game to the end with two players and two bots, keeping hands private', async () => {
+    const a = client('bel-a-secret', 'Amira');
+    const b = client('bel-b-secret', 'Bilel');
+    const spec = client('bel-s-secret', 'Sana');
+    const code = (await a.call<{ ok: boolean; code: string }>('create', { settings: { game: 'belote', targetScore: 1000 } })).code;
+    expect(await b.call('join', { code })).toMatchObject({ ok: true });
+    await a.waitFor(() => a.room?.seats[1], 4000, 'Bilel seated');
+    for (const seat of [2, 3]) expect(await a.call('addBot', { seat })).toEqual({ ok: true });
+    expect(await spec.call('join', { code, spectate: true })).toMatchObject({ ok: true });
+    await a.waitFor(() => a.room!.seats.every(Boolean) && a.room!.spectators.length === 1, 4000, 'table full');
+    expect(await a.call('start')).toEqual({ ok: true });
+
+    const belote = (c: TestClient) => (c.room?.game?.kind === 'belote' ? c.room.game : null);
+    const dealt = await a.waitFor(() => belote(a)?.myHand?.length === 8 && belote(a), 4000, 'deal');
+    await b.waitFor(() => belote(b)?.myHand?.length === 8, 4000, 'deal for Bilel');
+    await spec.waitFor(() => belote(spec), 4000, 'spectator view');
+    expect(dealt.stage).toBe('bidding');
+    expect(dealt.contract).toBeNull();
+    expect(dealt.coinche).toBe(1);
+    expect(belote(spec)!.myHand).toBeNull();
+    // Hands are private: nobody else sees Amira's cards.
+    const others = JSON.stringify(b.room) + JSON.stringify(b.events) + JSON.stringify(spec.room) + JSON.stringify(spec.events);
+    for (const card of dealt.myHand!) expect(others).not.toContain(`"id":"${card.id}"`);
+
+    // Out of turn, or a card during the bidding: refused.
+    const g = belote(a)!;
+    const waiting = g.turn === a.room!.you.seat ? b : g.turn === b.room!.you.seat ? a : a;
+    if (g.turn !== waiting.room!.you.seat) expect((await waiting.call('bid', { type: 'pass' })).ok).toBe(false);
+    expect((await a.call('play', { cardId: dealt.myHand![0]!.id })).ok).toBe(false);
+
+    // Play on; once, try a card the rules forbid, and calls the auction does not allow.
+    let refused = '';
+    let badCall = '';
+    for (let step = 0; step < 3000 && a.room!.phase !== 'gameOver'; step++) {
+      const version = a.room!.version;
+      for (const p of [a, b]) await p.waitFor(() => p.room!.version >= version, 4000, 'sync');
+      const view = a.room!;
+      if (view.phase === 'roundOver') {
+        const round = view.game!.round;
+        for (const p of [a, b]) p.socket.emit('continue');
+        await a.waitFor(() => a.room!.phase !== 'roundOver' || a.room!.game!.round !== round, 4000, 'next hand');
+        continue;
+      }
+      if (view.phase !== 'playing') break;
+      const actor = [a, b].find((p) => p.room!.you.seat === view.game!.turn);
+      if (!actor) {
+        const before = stateKey(view.game);
+        await a.waitFor(() => stateKey(a.room!.game) !== before || a.room!.phase !== 'playing', 4000, 'bot move');
+        continue;
+      }
+      const mine = belote(actor)!;
+      if (!badCall && mine.stage === 'bidding' && mine.coinche === 1) {
+        const low = await actor.call<{ ok: boolean; error?: string }>('bid', { type: 'bid', value: 80, suit: 'H' });
+        expect(low.ok).toBe(false);
+        expect((await actor.call('bid', { type: 'surcontre' })).ok).toBe(false);
+        expect((await actor.call('bid', { type: 'bid', value: 95, suit: 'H' })).ok).toBe(false);
+        expect((await actor.call('bid', 'pass')).ok).toBe(false);
+        badCall = low.error ?? '';
+      }
+      if (!refused && mine.stage === 'playing' && mine.trick.length > 0) {
+        const legal = new Set(legalCards(mine.myHand!, mine.trick, mine.trump!, actor.room!.you.seat!).map((c) => c.id));
+        const bad = mine.myHand!.find((c) => !legal.has(c.id));
+        if (bad) {
+          const res = await actor.call<{ ok: boolean; error?: string }>('play', { cardId: bad.id });
+          expect(res.ok).toBe(false);
+          refused = res.error ?? '';
+        }
+      }
+      await randomAction(actor);
+    }
+    expect(a.room!.phase).toBe('gameOver');
+    expect(refused).toMatch(/must/);
+    expect(badCall).toMatch(/Bid at least|Kabbout/);
+    const fin = belote(a)!;
+    expect(fin.winner).not.toBeNull();
+    expect(Math.max(...fin.scores)).toBeGreaterThanOrEqual(1000);
+    expect(fin.lastRound).not.toBeNull();
+    await spec.waitFor(() => spec.room?.phase === 'gameOver', 4000, 'spectator sees the end');
+    // Spectators never get cards of their own; every event kind of a Belote hand went by.
+    const kinds = new Set(spec.events.map((e) => e.kind));
+    for (const k of ['beloteDeal', 'beloteBid', 'beloteContract', 'belotePlay', 'beloteTrick', 'beloteEnd']) expect(kinds.has(k as never)).toBe(true);
+    for (const e of spec.events) if (e.kind === 'beloteDeal') expect(e.myCards).toBeNull();
+  }, 60_000);
+
+  it('passes for a Belote player whose time runs out in the bidding, and plays for them in the tricks', () => {
+    const table = createTable({ ...DEFAULT_SETTINGS, game: 'belote', mode: '2v2', targetScore: 1500 }, 4, seededRandom(4));
+    table.startRound();
+    const seat = table.turn;
+    expect(table.autoAction(seat, 'normal', seededRandom(1), 'timeout')).toEqual({ type: 'bid', call: { type: 'pass' } });
+    const names = { seat: () => 'x', team: () => 'y' };
+    // Bots bid at their level; someone takes eventually (or the cards are dealt again).
+    for (let i = 0; i < 40 && table.view(null).kind === 'belote' && (table.view(null) as { stage: string }).stage === 'bidding'; i++) {
+      table.act(table.turn, table.autoAction(table.turn, 'normal', seededRandom(i), 'bot'), true, names);
+    }
+    const view = table.view(table.turn);
+    expect(view.kind === 'belote' && view.stage).toBe('playing');
+    const auto = table.autoAction(table.turn, 'normal', seededRandom(2), 'timeout');
+    expect(auto.type).toBe('play');
+    expect(() => table.act(table.turn, auto, true, names)).not.toThrow();
   });
 });
