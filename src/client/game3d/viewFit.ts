@@ -93,6 +93,12 @@ export interface SeatFitInput {
    * the preferred value only breaks ties, e.g. when the screen's width alone sets the size.
    */
   targetZ: [min: number, max: number, preferred: number];
+  /**
+   * Part of a head's ball, on the side nearer a screen edge, that may go off screen: the back of
+   * the hair of the players sitting left and right, who face the table. Narrow screens use it to
+   * come closer. Defaults to 0.
+   */
+  sideTrim?: number;
 }
 
 export interface Ball {
@@ -184,6 +190,7 @@ export function fitSeatView(input: SeatFitInput): SeatView {
   const headBlockers = blockers.map((r) => inflate(r, 2));
   const poly: Pt2[] = input.cards.map(() => ({ x: 0, y: 0 }));
   const tmp: Pt2 = { x: 0, y: 0 };
+  const sideTrim = input.sideTrim ?? 0;
 
   /**
    * relax: 0 = all constraints, 1 = heads may touch the HUD, 2 = heads may be cut, 3 = cards only.
@@ -208,6 +215,9 @@ export function fitSeatView(input: SeatFitInput): SeatView {
         continue;
       }
       box.top += (box.bottom - box.top) * trim;
+      const cut = (box.right - box.left) * sideTrim;
+      if (tmp.x < W / 2) box.left += cut;
+      else box.right -= cut;
       if (box.left < EDGE_MARGIN || box.right > W - EDGE_MARGIN || box.top < EDGE_MARGIN || box.bottom > H - EDGE_MARGIN) return false;
       if (relax < 1) for (const k of headBlockers) if (overlapArea(box, k) > 0) return false;
     }
