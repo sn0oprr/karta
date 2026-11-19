@@ -5,12 +5,12 @@
  */
 import * as THREE from 'three';
 import { type CharacterId, SKIN_TONES } from '../../shared/protocol';
-import { type Beard, type Crop, type Curly, type GlassesKind, beard, cropHair, curlyHair, glasses, grin, hashSeed, shades, sleepyLid } from './features';
+import { type Beard, type Crop, type Curly, type GlassesKind, beard, cropHair, curlyHair, glasses, grin, hashSeed, maneHair, shades, sleepyLid, strawHat } from './features';
 import { addOutline, toon } from './materials';
 import { type Outfit, TORSO, addWatch, dress, torsoScale } from './outfits';
 import { animator, ease } from './tween';
 
-type HairStyle = 'chechia' | 'quiff' | 'bald' | 'cap' | 'bun' | 'scarf' | 'curls' | 'long' | 'crop' | 'curly';
+type HairStyle = 'chechia' | 'quiff' | 'bald' | 'cap' | 'bun' | 'scarf' | 'curls' | 'long' | 'crop' | 'curly' | 'mane';
 type MustacheShape = 'droopy' | 'handlebar' | 'full' | 'bushy' | 'thin';
 
 interface Look {
@@ -43,6 +43,8 @@ interface Look {
   /** Frame colour and lens tint of 'rect', 'wayfarer' and 'wire' glasses. */
   frame?: string;
   tint?: string;
+  /** A straw sun hat over the hair (in the accent colour). */
+  hat?: 'straw';
   /** Heavy, half-closed eyelids. */
   sleepy?: boolean;
   /** An open smile with teeth. */
@@ -285,6 +287,35 @@ export const LOOKS: Record<CharacterId, Look> = {
     frame: '#141318',
     build: 1.08,
     outfit: { kind: 'vest', color: '#d22237', stripes: ['#f7c51a', '#d4152d'], sleeves: '#24212a' },
+  },
+  birrrraa3: {
+    ...BASE,
+    skin: '#f0a56e',
+    hair: '#1e191a',
+    brow: '#1e191a',
+    browSize: 1.5,
+    style: 'crop',
+    crop: { front: 0.74, volume: 0.04 },
+    hat: 'straw',
+    accent: '#e2a04c',
+    beard: { color: '#1e191a', style: 'full', size: 1.0 },
+    mustache: { color: '#1e191a', shape: 'full' },
+    nose: 1.15,
+    build: 1.08,
+    outfit: { kind: 'hawaiian', color: '#3f9f3a', print: '#f3f6ec' },
+  },
+  snoussi: {
+    ...BASE,
+    skin: '#f0a874',
+    hair: '#2a1d1a',
+    brow: '#2a1d1a',
+    browSize: 1.45,
+    style: 'mane',
+    beard: { color: '#4a2f23', style: 'goatee', size: 0.9 },
+    nose: 1.1,
+    build: 1.02,
+    watch: 'smart',
+    outfit: { kind: 'jersey', color: '#1f4fe0', panel: '#1a1f4f', mark: '#f7f7f5' },
   },
 };
 
@@ -807,6 +838,9 @@ export class Avatar {
       case 'curly':
         head.add(curlyHair(L.hair, L.curly ?? { size: 0.2, lift: 0.1, front: 0.62 }, hashSeed(this.character)));
         break;
+      case 'mane':
+        head.add(maneHair(L.hair, hashSeed(this.character)));
+        break;
       case 'long': {
         const hair = sphere(1.24, L.hair, 28, OUT);
         hair.scale.set(1.03, 0.74, 1.03);
@@ -833,6 +867,7 @@ export class Avatar {
         break;
       }
     }
+    if (L.hat) head.add(strawHat(L.accent));
     if (L.shadesOnHead) {
       const pair = shades();
       pair.position.set(0, 1.14, -0.98);
