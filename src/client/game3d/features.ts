@@ -8,7 +8,7 @@
  */
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { addOutline, toon } from './materials';
+import { addOutline, canvasTexture, makeCanvas, toon } from './materials';
 
 const SKULL = 1.18;
 const SQUASH = 0.96;
@@ -209,6 +209,109 @@ export function cropHair(color: string, c: Crop, seed: number): THREE.Group {
   addOutline(tufts, 0.022);
   g.add(tufts);
   return g;
+}
+
+/**
+ * Long wavy hair, parted in the middle: it sweeps off the forehead, puffs out past the ears and
+ * falls in thick locks to the shoulders.
+ */
+export function maneHair(color: string, seed: number): THREE.Group {
+  const g = new THREE.Group();
+  const mat = toon(color, { side: THREE.DoubleSide });
+  const tilt = 0.5;
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(SKULL + 0.08, 32, 16, 0, Math.PI * 2, 0, Math.acos(0.7) + tilt), mat);
+  dome.rotation.x = tilt;
+  dome.scale.set(1.03, SQUASH + 0.1, SQUASH * 1.03);
+  dome.castShadow = true;
+  addOutline(dome, 0.03);
+  g.add(dome);
+
+  const rand = seeded(seed);
+  const parts: THREE.BufferGeometry[] = [];
+  // Locks hang in columns all around the back and sides (a = 0 is the back of the head).
+  const REACH = 2.12;
+  const COLUMNS = 13;
+  for (let c = 0; c < COLUMNS; c++) {
+    const a = -REACH + (2 * REACH * c) / (COLUMNS - 1);
+    const side = Math.abs(a) / REACH; // 0 at the back, 1 beside the face
+    const phase = rand() * Math.PI * 2;
+    for (let y = 0.74; y > -1.2; y -= 0.24) {
+      // Fullest around the jaw, tucked in again at the tips.
+      const puff = 0.15 * Math.sin(Math.PI * smoothstep(0.9, -1.5, y)) + 0.04 * side;
+      const r = SKULL - 0.02 + puff + Math.sin(y * 6 + phase) * 0.05;
+      // The locks beside the face swing back a little, to leave the cheeks free.
+      const at = a - Math.sign(a) * 0.12 * side * smoothstep(0.5, -0.6, y);
+      const lock = new THREE.SphereGeometry(0.24 + rand() * 0.06, 9, 7);
+      lock.scale(1, 1.15, 1);
+      lock.translate(Math.sin(at) * r, y, Math.cos(at) * r * SQUASH);
+      parts.push(lock);
+    }
+  }
+  // Two waves swept up and away from the parting.
+  for (const s of [-1, 1]) {
+    const wave = new THREE.SphereGeometry(0.56, 16, 12);
+    wave.scale(1.05, 0.6, 1.2);
+    wave.rotateZ(-s * 0.5);
+    wave.translate(s * 0.62, 0.98, -0.3);
+    parts.push(wave);
+  }
+  const locks = new THREE.Mesh(merge(parts), toon(color));
+  locks.castShadow = true;
+  addOutline(locks, 0.022);
+  g.add(locks);
+  return g;
+}
+
+// ─────────────────────────────── hats ───────────────────────────────
+
+/** Woven straw: short strokes, lighter and darker than the straw itself. */
+function strawTexture(color: string): THREE.CanvasTexture {
+  const [canvas, ctx] = makeCanvas(128, 128);
+  ctx.fillStyle = color;
+  ctx.fillRect(0, 0, 128, 128);
+  const rand = seeded(7);
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = 'round';
+  for (let i = 0; i < 260; i++) {
+    const x = rand() * 128;
+    const y = rand() * 128;
+    const d = rand() < 0.5 ? 1 : -1;
+    ctx.strokeStyle = rand() < 0.5 ? 'rgba(120, 70, 20, 0.2)' : 'rgba(255, 235, 190, 0.22)';
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + 7 * d, y + 5);
+    ctx.stroke();
+  }
+  return canvasTexture(canvas, { repeat: [6, 3] });
+}
+
+/** A straw sun hat, tipped back: a round crown and a wide brim that shades the ears. */
+export function strawHat(color: string): THREE.Mesh {
+  const profile: [number, number][] = [
+    [0, 1.16],
+    [0.45, 1.13],
+    [0.82, 1.0],
+    [1.07, 0.74],
+    [1.18, 0.38],
+    [1.2, 0.12],
+    [1.32, 0.04],
+    [1.7, -0.04],
+    [1.98, -0.1],
+    [2.05, -0.16],
+    [1.98, -0.2],
+    [1.3, -0.1],
+    [1.12, -0.04],
+  ];
+  const geo = new THREE.LatheGeometry(
+    profile.map(([r, y]) => new THREE.Vector2(r, y)),
+    40,
+  );
+  const hat = new THREE.Mesh(geo, toon('#ffffff', { map: strawTexture(color), side: THREE.DoubleSide }));
+  hat.castShadow = true;
+  addOutline(hat, 0.03);
+  hat.position.set(0, 0.52, 0.16);
+  hat.rotation.x = 0.3;
+  return hat;
 }
 
 // ─────────────────────────────── glasses ───────────────────────────────

@@ -1,11 +1,11 @@
 /**
  * Clothes for the crew: a puffer jacket or vest, a hoodie, a polo with a crossbody bag, sweaters,
- * a T-shirt, or no shirt at all. Patterns are painted on the torso capsule's UVs (u = 0.75 is the
+ * a T-shirt, a leafy holiday shirt, a sports jersey, or no shirt at all. Patterns are painted on the torso capsule's UVs (u = 0.75 is the
  * chest and grows toward the avatar's left; v runs from the bottom pole up to the neck), then a few
  * 3D pieces finish the silhouette: collars, a hood, quilted puffs, a watch.
  */
 import * as THREE from 'three';
-import { merge, shades } from './features';
+import { merge, seeded, shades } from './features';
 import { addOutline, canvasTexture, makeCanvas, toon } from './materials';
 
 /** The torso capsule (body space): radius, length of the straight part, and centre height. */
@@ -22,6 +22,8 @@ export type Outfit =
   | { kind: 'polo'; color: string; band: string; strap: string }
   | { kind: 'puffer'; color: string; inner: string }
   | { kind: 'vest'; color: string; stripes: readonly [string, string]; sleeves: string }
+  | { kind: 'hawaiian'; color: string; print: string }
+  | { kind: 'jersey'; color: string; panel: string; mark: string }
   | { kind: 'bare' };
 
 export interface BodyParts {
@@ -108,13 +110,56 @@ function fillPoly(ctx: CanvasRenderingContext2D, pts: [number, number][]) {
   ctx.fill();
 }
 
+/** A sprig of leaves fanning out from a stem (holiday shirt print). */
+function sprig(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, turn: number, color: string) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(turn);
+  ctx.scale(size, size);
+  ctx.fillStyle = color;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'round';
+  line(ctx, [
+    [0, 22],
+    [0, -6],
+  ]);
+  for (const [a, len, base] of [
+    [0, 30, -4],
+    [-0.75, 26, 2],
+    [0.75, 26, 2],
+    [-1.3, 20, 12],
+    [1.3, 20, 12],
+  ] as const) {
+    ctx.save();
+    ctx.translate(0, base);
+    ctx.rotate(a);
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.quadraticCurveTo(7, -len * 0.55, 0, -len);
+    ctx.quadraticCurveTo(-7, -len * 0.55, 0, 0);
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
 /** Short sleeves: the shirt at the shoulder, bare arm below (v = 1 is the shoulder end). */
-function shortSleeves(color: string, skin: string): THREE.MeshToonMaterial {
+function shortSleeves(color: string, skin: string, print?: string): THREE.MeshToonMaterial {
   const [canvas, ctx] = makeCanvas(32, 128);
   ctx.fillStyle = skin;
   ctx.fillRect(0, 0, 32, 128);
   ctx.fillStyle = color;
   ctx.fillRect(0, 0, 32, 56);
+  if (print) {
+    for (const [x, y, turn] of [
+      [6, 18, 0.4],
+      [18, 38, -0.5],
+      [27, 14, 2.6],
+    ] as const) {
+      sprig(ctx, x, y, 0.3, turn, print);
+    }
+  }
   ctx.fillStyle = tone(color, -0.3);
   ctx.fillRect(0, 52, 32, 5);
   return toon('#ffffff', { map: canvasTexture(canvas) });
@@ -432,6 +477,83 @@ export function dress(outfit: Outfit, skin: string): Dressed {
         },
       };
     }
+    case 'hawaiian':
+      return {
+        torso: painted((ctx) => {
+          ctx.fillStyle = outfit.color;
+          ctx.fillRect(0, 0, TW, TH);
+          // Leaves all over, turned every which way.
+          const rand = seeded(11);
+          wrapped(ctx, () => {
+            for (let row = 0; row < 5; row++) {
+              for (let col = 0; col < 8; col++) {
+                const x = ((col + (row % 2) * 0.5 + (rand() - 0.5) * 0.3) / 8) * TW;
+                const y = py(0.85 - row * 0.62 + (rand() - 0.5) * 0.15);
+                sprig(ctx, x, y, 0.62 + rand() * 0.2, (rand() - 0.5) * 2.4, outfit.print);
+              }
+            }
+          });
+          // Open at the neck, buttoned below.
+          ctx.fillStyle = skin;
+          fillPoly(ctx, [
+            [px(-0.34), 0],
+            [px(0.34), 0],
+            [px(0), py(0.5)],
+          ]);
+          ctx.strokeStyle = tone(outfit.color, -0.3);
+          ctx.lineWidth = 3;
+          line(ctx, [
+            [px(0), py(0.5)],
+            [px(0), TH],
+          ]);
+          ctx.fillStyle = tone(outfit.color, -0.4);
+          for (const y of [0.2, -0.3, -0.8]) {
+            ctx.beginPath();
+            ctx.arc(px(0) + 7, py(y), 3.2, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }),
+        sleeves: shortSleeves(outfit.color, skin, outfit.print),
+        finish: (p) => {
+          const mat = toon(outfit.color);
+          neckRing(p, mat, 1.03, 0.62, 0.09, 0.9);
+          // A camp collar: two wide flaps lying open on the chest.
+          for (const side of [-1, 1]) {
+            const flap = addMesh(p.body, new THREE.SphereGeometry(0.3, 14, 10), mat, 0.018);
+            flap.scale.set(1.15, 0.6, 0.3);
+            flap.position.set(side * 0.42, 0.84, chestZ(0.84, p.build) + 0.06);
+            flap.rotation.set(-0.55, side * 0.35, side * 0.6);
+          }
+        },
+      };
+    case 'jersey':
+      return {
+        torso: painted((ctx) => {
+          ctx.fillStyle = outfit.color;
+          ctx.fillRect(0, 0, TW, TH);
+          ctx.fillStyle = outfit.panel;
+          // A dark slanted panel across the chest, and a dark yoke over the shoulder blades.
+          fillPoly(ctx, [
+            [px(-0.95), py(0.1)],
+            [px(-0.2), py(0.85)],
+            [px(0.95), py(0.85)],
+            [px(0.95), py(0.2)],
+            [px(0.2), py(-0.55)],
+            [px(-0.95), py(-0.55)],
+          ]);
+          ctx.fillRect(px(Math.PI - 1.15), py(1.05), px(Math.PI + 1.15) - px(Math.PI - 1.15), py(0.5) - py(1.05));
+          // The badge: a white slanted bar.
+          ctx.fillStyle = outfit.mark;
+          fillPoly(ctx, [
+            [px(-0.48), py(-0.22)],
+            [px(0.1), py(-0.22)],
+            [px(0.48), py(0.42)],
+            [px(-0.1), py(0.42)],
+          ]);
+        }),
+        sleeves: shortSleeves(outfit.color, skin),
+        finish: (p) => void neckRing(p, toon(tone(outfit.color, -0.2)), 1.0, 0.6, 0.09),
+      };
     case 'bare':
       return {
         torso: painted((ctx) => {

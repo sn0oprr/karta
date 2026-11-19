@@ -99,6 +99,8 @@ export const CREW = [
   { id: '7saan', name: '7saan', hint: 'Curls, glasses and a big moustache' },
   { id: 'habboub', name: 'habboub', hint: 'Curls and round glasses' },
   { id: 'gratos', name: 'Gratos', hint: 'Shades and the red-and-yellow jersey' },
+  { id: 'birrrraa3', name: 'Birrrraa3', hint: 'Straw hat and a leafy green shirt' },
+  { id: 'snoussi', name: 'Snoussi', hint: 'Long wavy hair and a blue sports tee' },
 ] as const;
 
 export const CHARACTERS = [...REGULARS, ...CREW] as const;
