@@ -24,7 +24,7 @@ function input(width: number, height: number, hud: Rect[], hand: Rect | null): S
     edge: EDGE,
     hud,
     hand,
-    pitch: [46, 70, 60],
+    pitch: portrait ? [28, 48, 40] : [20, 40, 30],
     fov: portrait ? [38, 62, 50] : [28, 50, 40],
     targetZ: [-0.4 * TABLE_EXTENT, 0.7 * TABLE_EXTENT, 0],
   };

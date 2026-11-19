@@ -1561,9 +1561,12 @@ export class Board {
       edge: tableEdgePoints(24).filter((p) => p.z < 0.25 * TABLE_EXTENT),
       hud: this.stage.overlay,
       hand: spectating ? null : this.handRect(),
-      // Spectators look from higher up, over the near player's head.
-      pitch: spectating ? [56, 78, 68] : [46, 70, 60],
+      // Seated players look across the table from about eye level, so they see the others' faces
+      // (a little higher on tall screens, where a flat view would squash the cards). Spectators
+      // look from higher up, over the near player's head.
+      pitch: spectating ? [56, 78, 68] : portrait ? [28, 48, 40] : [20, 40, 30],
       fov: portrait ? [38, 62, 50] : [28, 50, 40],
+      sideTrim: portrait && !spectating ? 0.25 : 0,
       targetZ: [-0.4 * TABLE_EXTENT, 0.7 * TABLE_EXTENT, 0],
     });
     const dir = new THREE.Vector3(0, Math.sin(view.pitch), Math.cos(view.pitch));
