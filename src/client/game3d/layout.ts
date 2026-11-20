@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CARD_H, CARD_W } from './cardMesh';
+import { CARD_H, CARD_T, CARD_W } from './cardMesh';
 import { FLOOR_Y } from './environment';
 
 export const SEAT_RADIUS = 7.0;
@@ -26,18 +26,26 @@ export function avatarPosition(view: number, n: number): THREE.Vector3 {
   return viewDir(view, n).multiplyScalar(SEAT_RADIUS).setY(AVATAR_Y);
 }
 
+/** How far from the centre piles and the stock lie: near the edge of the felt, around the table cards. */
+const STACK_RADIUS = 4.0;
+
 /** Captured pile: on the table in front of the player, to their right. */
 export function pilePosition(view: number, n: number): THREE.Vector3 {
   return viewDir(view, n)
-    .multiplyScalar(n === 2 ? 3.45 : 3.75)
-    .add(viewRight(view, n).multiplyScalar(n === 2 ? 2.9 : 2.05));
+    .multiplyScalar(STACK_RADIUS)
+    .add(viewRight(view, n).multiplyScalar(n === 2 ? 2.9 : 2.3));
 }
 
 /** Stock: on the dealer's left. */
 export function deckPosition(view: number, n: number): THREE.Vector3 {
   return viewDir(view, n)
-    .multiplyScalar(n === 2 ? 3.45 : 3.75)
-    .add(viewRight(view, n).multiplyScalar(n === 2 ? -2.9 : -2.05));
+    .multiplyScalar(STACK_RADIUS)
+    .add(viewRight(view, n).multiplyScalar(n === 2 ? -2.9 : -2.3));
+}
+
+/** The stock's yaw: lying like the dealer's pile, a little askew. */
+export function deckYaw(view: number, n: number): number {
+  return viewYaw(view, n) - 0.12;
 }
 
 /** A point `r` from the centre, `angle` radians from the player's direction toward their left. */
@@ -67,25 +75,48 @@ export interface Slot {
   yaw: number;
 }
 
-const COL = CARD_W * 1.18;
-const ROW = CARD_H * 1.12;
+/** Cards lying on the table are drawn this much bigger than in hands and piles, to read well from every seat. */
+export const TABLE_CARD_SCALE = 1.5;
 
-/** Fixed slots for table cards, ordered from the centre outwards. */
+/**
+ * Fixed slots for table cards, in the order they fill. The middle holds a block of three by two;
+ * then come one card in front of each side player (between that player's pile and stock); a crowded
+ * table lays more over the block's seams, each card underneath keeping a corner index in sight. The
+ * near and far players' piles and stocks leave no room in front of them. `pos.y` raises the cards
+ * laid over others.
+ */
 export const TABLE_SLOTS: Slot[] = (() => {
-  const raw: { x: number; z: number }[] = [];
-  // Two main rows of five, offset by half a card, then overflow positions.
-  for (const z of [-0.5 * ROW, 0.5 * ROW]) for (let c = -2; c <= 2; c++) raw.push({ x: c * COL + (z < 0 ? -0.25 : 0.25), z });
-  for (const z of [-1.5 * ROW, 1.5 * ROW]) for (const c of [-1, 0, 1]) raw.push({ x: c * COL, z: z * 0.97 });
-  for (const x of [-3 * COL, 3 * COL]) raw.push({ x: x * 0.98, z: 0 });
+  const w = CARD_W * TABLE_CARD_SCALE;
+  const h = CARD_H * TABLE_CARD_SCALE;
+  const gap = 0.16;
+  const col = w + gap;
+  const row = (h + gap) / 2;
+  const lift = CARD_T * TABLE_CARD_SCALE + 0.006;
+  const raw: [x: number, z: number, layer: number][] = [
+    // The block: its middle column, then its corners crosswise.
+    [0, -row, 0],
+    [0, row, 0],
+    [-col, -row, 0],
+    [col, row, 0],
+    [col, -row, 0],
+    [-col, row, 0],
+    // In front of the side players.
+    [-2 * col, 0, 0],
+    [2 * col, 0, 0],
+    // Over the seams where four cards meet: each covers one corner of every card under it, so those
+    // keep the opposite corner's index in sight. The very last goes over the middle.
+    [col / 2, 0, 1],
+    [-col / 2, 0, 1],
+    [1.5 * col, 0, 1],
+    [-1.5 * col, 0, 1],
+    [0, 0, 2],
+  ];
   let seed = 11;
   const rnd = () => {
     seed = (seed * 16807) % 2147483647;
     return seed / 2147483647 - 0.5;
   };
-  return raw
-    .map((p) => ({ p, d: Math.hypot(p.x * 0.8, p.z) + p.x * 0.001 }))
-    .sort((a, b) => a.d - b.d)
-    .map(({ p }) => ({ pos: new THREE.Vector3(p.x + rnd() * 0.08, 0, p.z + rnd() * 0.08), yaw: rnd() * 0.12 }));
+  return raw.map(([x, z, layer]) => ({ pos: new THREE.Vector3(x + rnd() * 0.06, layer * lift, z + rnd() * 0.06), yaw: rnd() * 0.1 }));
 })();
 
 // ───────────────────────────── hands ─────────────────────────────
@@ -98,7 +129,7 @@ export const TABLE_SLOTS: Slot[] = (() => {
  */
 export function trickSlot(view: number, n: number): Slot {
   const d = viewDir(view, n);
-  const r = Math.abs(d.z) > 0.5 ? 1.05 : 1.42;
+  const r = (Math.abs(d.z) > 0.5 ? 1.05 : 1.42) * TABLE_CARD_SCALE;
   return { pos: d.multiplyScalar(r), yaw: [-0.07, 0.1, 0.05, -0.11][view % 4]! };
 }
 
@@ -108,7 +139,10 @@ export function trumpTokenPosition(view: number, n: number): THREE.Vector3 {
 }
 
 /** Everywhere a Belote card lies in the middle of the table (the trick), with a margin. */
-export const BELOTE_CARD_EXTENT = { x: 1.42 + CARD_W / 2 + 0.15, z: 1.05 + CARD_H / 2 + 0.15 };
+export const BELOTE_CARD_EXTENT = {
+  x: (1.42 + CARD_W / 2) * TABLE_CARD_SCALE + 0.15,
+  z: (1.05 + CARD_H / 2) * TABLE_CARD_SCALE + 0.15,
+};
 
 /** Fanned layout for N cards held by an opponent (in the avatar's hand-anchor space). */
 export function heldCardTransform(i: number, count: number, out: { pos: THREE.Vector3; rot: THREE.Euler }) {

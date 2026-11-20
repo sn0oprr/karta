@@ -114,9 +114,9 @@ type SearchRange = [min: number, max: number, preferred: number];
  * look across the table from about eye level, so they see the others' faces (a little higher on
  * tall screens, where a flat view would squash the cards); spectators look from higher up, over
  * the near player's head. On a phone held upright, the players sitting left and right are what
- * keeps the camera back, as the screen is narrow and they sit far apart: there a wide lens brings
- * it close and low behind the seat, with their faces at the screen's edges and the backs of their
- * heads past them.
+ * keeps the camera back, as the screen is narrow and they sit far apart and must both stay in
+ * sight (only the back of their hair may touch the edge): there a wide lens brings it close and low
+ * behind the seat, the near half of the table looming as it would from the chair.
  */
 export function seatViewRanges(
   aspect: number,
@@ -136,7 +136,7 @@ export function seatViewRanges(
     pitch: !seated ? [56, 78, 68] : portrait ? mix([28, 48, 40], [34, 40, 37]) : [20, 40, 30],
     fov: portrait ? mix([38, 62, 50], [60, 84, 76]) : [28, 50, 40],
     targetZ: [-(0.4 + 0.2 * phone) * tableExtent, 0.7 * tableExtent, 0],
-    sideTrim: portrait && seated ? 0.25 + 0.25 * phone : 0,
+    sideTrim: portrait && seated ? 0.15 : 0,
   };
 }
 

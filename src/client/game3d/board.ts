@@ -37,10 +37,12 @@ import { Confetti, Shockwave, Smoke } from './fx';
 import {
   BELOTE_CARD_EXTENT,
   HAND_DEPTH,
+  TABLE_CARD_SCALE,
   TABLE_SLOTS,
   avatarPosition,
   chichaPosition,
   deckPosition,
+  deckYaw,
   drinkPosition,
   heldCardTransform,
   myHandRect,
@@ -97,30 +99,54 @@ export type SfxName = 'deal' | 'lay' | 'capture' | 'chkobba' | 'flip' | 'hover' 
 
 type CameraMode = 'menu' | 'seat';
 
-const DECK_YAW = -0.12;
 const AVATAR_SCALE = 0.88;
 const HELD_SCALE = 0.62;
 const tmpV = new THREE.Vector3();
 const tmpV2 = new THREE.Vector3();
 const tmpQ = new THREE.Quaternion();
 
-/** Everywhere a Chkobba table card can lie (every slot, plus the card's size), as a rectangle on the felt. */
+/**
+ * Everywhere a Chkobba table card can lie: the outline around every slot's card (a little margin
+ * included). The slots make a cross, wide in the middle and narrow toward the near and far rows, so
+ * the outline is much narrower than its bounding box where it comes closest to the camera.
+ */
 const CHKOBBA_AREA: Pt3[] = (() => {
-  let x = 0;
-  let z = 0;
+  const hw = (CARD_W * TABLE_CARD_SCALE) / 2 + 0.08;
+  const hh = (CARD_H * TABLE_CARD_SCALE) / 2 + 0.08;
+  const pts: Pt2[] = [];
   for (const s of TABLE_SLOTS) {
-    x = Math.max(x, Math.abs(s.pos.x));
-    z = Math.max(z, Math.abs(s.pos.z));
+    const c = Math.cos(s.yaw);
+    const n = Math.sin(s.yaw);
+    for (const [dx, dz] of [
+      [-hw, -hh],
+      [hw, -hh],
+      [hw, hh],
+      [-hw, hh],
+    ] as const) {
+      pts.push({ x: s.pos.x + dx * c + dz * n, y: s.pos.z - dx * n + dz * c });
+    }
   }
-  x += CARD_W / 2 + 0.08;
-  z += CARD_H / 2 + 0.08;
-  return [
-    { x: -x, y: 0, z: -z },
-    { x, y: 0, z: -z },
-    { x, y: 0, z },
-    { x: -x, y: 0, z },
-  ];
+  return convexHull(pts).map((p) => ({ x: p.x, y: 0, z: p.y }));
 })();
+
+/** Convex hull of points (Andrew's monotone chain), anticlockwise, without collinear points. */
+function convexHull(points: Pt2[]): Pt2[] {
+  const pts = [...points].sort((a, b) => a.x - b.x || a.y - b.y);
+  if (pts.length < 3) return pts;
+  const cross = (o: Pt2, a: Pt2, b: Pt2) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  const lower: Pt2[] = [];
+  for (const p of pts) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2]!, lower[lower.length - 1]!, p) <= 0) lower.pop();
+    lower.push(p);
+  }
+  const upper: Pt2[] = [];
+  for (let i = pts.length - 1; i >= 0; i--) {
+    const p = pts[i]!;
+    while (upper.length >= 2 && cross(upper[upper.length - 2]!, upper[upper.length - 1]!, p) <= 0) upper.pop();
+    upper.push(p);
+  }
+  return [...lower.slice(0, -1), ...upper.slice(0, -1)];
+}
 
 /** Where Belote's cards lie on the table: the trick in the middle. */
 const BELOTE_AREA: Pt3[] = [
@@ -289,9 +315,10 @@ export class Board {
       const t = this.tableTransform(i);
       c.root.position.copy(t.pos);
       c.root.quaternion.copy(t.quat);
+      c.root.scale.setScalar(t.scale);
     });
     this.deck.root.position.copy(deckPosition(1, n));
-    this.deck.root.rotation.y = DECK_YAW;
+    this.deck.root.rotation.y = deckYaw(1, n);
     this.deck.setCount(16);
     for (let s = 0; s < n; s++) {
       this.piles[s] ??= (() => {
@@ -679,7 +706,8 @@ export class Board {
 
   private tableTransform(slot: number) {
     const s = TABLE_SLOTS[Math.min(slot, TABLE_SLOTS.length - 1)]!;
-    return { pos: s.pos.clone().setY(CARD_T / 2 + 0.018), quat: flatQuat(s.yaw, true) };
+    const y = s.pos.y + (CARD_T * TABLE_CARD_SCALE) / 2 + 0.018;
+    return { pos: s.pos.clone().setY(y), quat: flatQuat(s.yaw, true), scale: TABLE_CARD_SCALE };
   }
 
   private syncCards(room: RoomView, relayout: boolean) {
@@ -731,7 +759,7 @@ export class Board {
       if (c.root.parent !== this.group) this.group.attach(c.root);
       c.root.position.copy(t.pos);
       c.root.quaternion.copy(t.quat);
-      c.root.scale.setScalar(1);
+      c.root.scale.setScalar(t.scale);
     }
 
     // Piles and chkobba markers.
@@ -759,7 +787,7 @@ export class Board {
     // Stock.
     const dv = this.viewOf(g.dealer);
     this.deck.root.position.copy(deckPosition(dv, this.n));
-    this.deck.root.rotation.y = DECK_YAW;
+    this.deck.root.rotation.y = deckYaw(dv, this.n);
     this.deck.setCount(g.deckCount);
     void relayout;
   }
@@ -983,7 +1011,7 @@ export class Board {
     const n = this.n;
     const dv = this.viewOf(ev.dealer);
     const deckPos = deckPosition(dv, n);
-    const deckYaw = DECK_YAW;
+    const stockYaw = deckYaw(dv, n);
     if (ev.initial) {
       // New hand: collect the previous one into the stock.
       await this.gatherEverything(deckPos);
@@ -992,7 +1020,7 @@ export class Board {
       for (const list of this.held) for (const c of list ?? []) this.release(c);
       this.held = Array.from({ length: n }, () => []);
       this.deck.root.position.copy(deckPos);
-      this.deck.root.rotation.y = deckYaw;
+      this.deck.root.rotation.y = stockYaw;
       this.deck.setCount(40);
       if (ev.redeals > 0) await wait(150);
     }
@@ -1009,7 +1037,7 @@ export class Board {
       const id = isMe ? (myCards.shift()?.id ?? null) : null;
       const c = this.take(null);
       c.root.position.copy(deckPos).setY(this.deck.topY + 0.02);
-      c.root.quaternion.copy(flatQuat(deckYaw, false));
+      c.root.quaternion.copy(flatQuat(stockYaw, false));
       this.group.add(c.root);
       const d = delay;
       delay += step;
@@ -1073,7 +1101,7 @@ export class Board {
       const c = this.take(card.id);
       c.role = 'table';
       c.root.position.copy(deckPos).setY(this.deck.topY + 0.02);
-      c.root.quaternion.copy(flatQuat(deckYaw, false));
+      c.root.quaternion.copy(flatQuat(stockYaw, false));
       this.group.add(c.root);
       this.tableCards.set(card.id, c);
       this.slotOf.set(card.id, slot);
@@ -1090,6 +1118,7 @@ export class Board {
             position: t.pos,
             quaternion: t.quat,
             via: standQuat(0, 0.35),
+            scale: t.scale,
             duration: 480,
             arc: 1.5,
             ease: ease.outCubic,
@@ -1155,7 +1184,7 @@ export class Board {
         position: t.pos.clone().setY(0.25),
         quaternion: t.quat,
         via: standQuat(0, 0.9),
-        scale: 1,
+        scale: t.scale,
         duration: 520,
         arc: 1.6,
         ease: ease.inOutCubic,
@@ -1177,7 +1206,7 @@ export class Board {
       position: centre.clone().add(tmpV.set(0.18, 0, 0.22)),
       quaternion: flatQuat(0.22, true),
       via: standQuat(0, 0.9),
-      scale: 1,
+      scale: TABLE_CARD_SCALE,
       duration: 480,
       arc: 1.6,
     });
@@ -1214,7 +1243,7 @@ export class Board {
         const t = this.markerTransform(seat, list.length);
         list.push(obj);
         obj.role = 'marker';
-        return moveObject(obj.root, { position: t.pos, quaternion: t.quat, duration: 480, delay: i * 70, arc: 1.0 }).then(() => {
+        return moveObject(obj.root, { position: t.pos, quaternion: t.quat, scale: 1, duration: 480, delay: i * 70, arc: 1.0 }).then(() => {
           pile.setCount(pile.count + 1);
           pile.root.position.y = this.pileBaseY(this.markers[seat]?.length ?? 0);
         });
@@ -1222,6 +1251,7 @@ export class Board {
       return moveObject(obj.root, {
         position: pilePos.clone().setY(pile.topY + 0.05 + i * 0.01),
         quaternion: flatQuat(pileYaw, false),
+        scale: 1,
         duration: 430,
         delay: i * 70,
         arc: 1.1,
@@ -1254,6 +1284,7 @@ export class Board {
       return moveObject(obj.root, {
         position: pilePos.clone().setY(pile.topY + 0.05),
         quaternion: flatQuat(pileYaw, false),
+        scale: 1,
         duration: 520,
         delay: 200 + i * 90,
         arc: 1.3,
@@ -1311,7 +1342,7 @@ export class Board {
       const tr = this.trickTransform(p.seat, i);
       t.obj.root.position.copy(tr.pos);
       t.obj.root.quaternion.copy(tr.quat);
-      t.obj.root.scale.setScalar(1);
+      t.obj.root.scale.setScalar(tr.scale);
       t.obj.setGlow(0);
     });
     this.trickObjs.sort((a, b) => ids.indexOf(a.obj.cardId!) - ids.indexOf(b.obj.cardId!));
@@ -1322,14 +1353,15 @@ export class Board {
       this.piles[s]!.root.position.y = 0;
     }
     this.deck.root.position.copy(deckPosition(this.viewOf(g.dealer), this.n));
-    this.deck.root.rotation.y = DECK_YAW;
+    this.deck.root.rotation.y = deckYaw(this.viewOf(g.dealer), this.n);
     this.deck.setCount(0);
     this.placeTrumpToken(g.trump, g.taker);
   }
 
   private trickTransform(seat: number, order: number) {
     const s = trickSlot(this.viewOf(seat), this.n);
-    return { pos: s.pos.clone().setY(CARD_T / 2 + 0.018 + order * 0.006), quat: flatQuat(s.yaw, true) };
+    const y = (CARD_T * TABLE_CARD_SCALE) / 2 + 0.018 + order * 0.006;
+    return { pos: s.pos.clone().setY(y), quat: flatQuat(s.yaw, true), scale: TABLE_CARD_SCALE };
   }
 
   private placeTrumpToken(trump: Suit | null, taker: number | null) {
@@ -1371,7 +1403,7 @@ export class Board {
         this.deck.setCount(Math.max(0, remaining));
         const c = this.take(null);
         c.root.position.copy(deckPos).setY(this.deck.topY + 0.02);
-        c.root.quaternion.copy(flatQuat(DECK_YAW, false));
+        c.root.quaternion.copy(flatQuat(this.deck.root.rotation.y, false));
         this.group.add(c.root);
         this.cb.sfx('deal');
         if (isMe) {
@@ -1418,12 +1450,13 @@ export class Board {
   /** 8 cards each, in two lots of 4. */
   private async animateBeloteDeal(ev: BeloteDealEvent) {
     const deckPos = deckPosition(this.viewOf(ev.dealer), this.n);
+    const stockYaw = deckYaw(this.viewOf(ev.dealer), this.n);
     // Everything goes back to the deck first: the last hand's tricks (and cards still held, when a hand
     // stopped early), or after a redeal everybody's cards.
     await this.gatherEverything(deckPos, true);
     if (ev.redeals > 0) this.cb.onRedeal();
     this.deck.root.position.copy(deckPos);
-    this.deck.root.rotation.y = DECK_YAW;
+    this.deck.root.rotation.y = stockYaw;
     this.deck.setCount(ev.order.length);
     await this.dealCards(deckPos, ev.order, (ev.myCards ?? []).map((c) => c.id), 8);
     this.deck.setCount(0);
@@ -1457,7 +1490,7 @@ export class Board {
       position: t.pos.clone().setY(0.25),
       quaternion: t.quat,
       via: standQuat(0, 0.9),
-      scale: 1,
+      scale: t.scale,
       duration: 440,
       arc: 1.4,
       ease: ease.inOutCubic,
@@ -1496,6 +1529,7 @@ export class Board {
         return moveObject(obj.root, {
           position: pilePos.clone().setY(pile.topY + 0.05 + i * 0.01),
           quaternion: flatQuat(pileYaw, false),
+          scale: 1,
           duration: 400,
           delay: i * 55,
           arc: 1.0,
