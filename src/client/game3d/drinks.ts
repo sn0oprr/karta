@@ -1,11 +1,12 @@
 /**
- * Café orders: an express on its saucer, a glass of tea with pine nuts, a Coke with a straw,
+ * Café orders: an express on its saucer, a glass of tea with pine nuts, a Boga Cidre with a straw,
  * and a chicha standing on the floor beside the table. Each prop has a part that travels to the
  * drinker's mouth (the cup, glass or bottle; for the chicha, the mouthpiece at the end of its hose).
  */
 import * as THREE from 'three';
 import type { DrinkId } from '../../shared/protocol';
 import type { Avatar } from './avatar';
+import { ensureCardFonts } from './cardArt';
 import type { Smoke } from './fx';
 import { addOutline, toon } from './materials';
 import { animator, ease, wait } from './tween';
@@ -50,27 +51,119 @@ function stripes(a: string, b: string, n: number, diagonal: boolean): THREE.Canv
   return tex;
 }
 
-/** Red label with a white ribbon (a generic cola, no logo). */
-function labelTexture(): THREE.CanvasTexture {
+const LABEL_FONT = '"Lilita One", "Fredoka", system-ui, sans-serif';
+
+/**
+ * A wrap-around label drawn on a canvas, twice round (one logo faces the drinker, one the far side),
+ * drawn again once the app's fonts have loaded if they had not yet.
+ */
+function labelTexture(width: number, height: number, draw: (ctx: CanvasRenderingContext2D, cx: number) => void, background: (ctx: CanvasRenderingContext2D) => void) {
   const c = document.createElement('canvas');
-  c.width = 128;
-  c.height = 32;
+  c.width = width;
+  c.height = height;
   const ctx = c.getContext('2d')!;
-  ctx.fillStyle = '#d7262e';
-  ctx.fillRect(0, 0, 128, 32);
-  ctx.strokeStyle = '#ffffff';
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  for (let x = 0; x <= 128; x += 2) {
-    const y = 16 + Math.sin((x / 128) * Math.PI * 4) * 7;
-    if (x === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  }
-  ctx.stroke();
+  const paint = () => {
+    background(ctx);
+    // A cylinder's texture starts facing +Z: centre the logos there and opposite (the first one
+    // wraps across the seam).
+    for (const cx of [0, width / 2, width]) draw(ctx, cx);
+  };
+  paint();
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.wrapS = THREE.RepeatWrapping;
+  tex.anisotropy = 4;
+  void ensureCardFonts().then(() => {
+    paint();
+    tex.needsUpdate = true;
+  });
   return tex;
+}
+
+/** Boga's gold, darker toward the label's edges. */
+function bogaGold(ctx: CanvasRenderingContext2D) {
+  const { width: w, height: h } = ctx.canvas;
+  const g = ctx.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, '#de8b0f');
+  g.addColorStop(0.2, '#f6c026');
+  g.addColorStop(0.5, '#ffd94e');
+  g.addColorStop(0.8, '#f6c026');
+  g.addColorStop(1, '#de8b0f');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+}
+
+/** A soft white glow behind a logo. */
+function glow(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number) {
+  const g = ctx.createRadialGradient(cx, cy, r * 0.05, cx, cy, r);
+  g.addColorStop(0, 'rgba(255, 255, 255, 0.95)');
+  g.addColorStop(0.5, 'rgba(255, 253, 236, 0.6)');
+  g.addColorStop(1, 'rgba(255, 250, 220, 0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+}
+
+/** "Boga" in blue, outlined in white. */
+function bogaWord(ctx: CanvasRenderingContext2D, cx: number, baseline: number, size: number) {
+  ctx.font = `400 ${size}px ${LABEL_FONT}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = size * 0.16;
+  ctx.strokeStyle = '#ffffff';
+  ctx.strokeText('Boga', cx, baseline);
+  const blue = ctx.createLinearGradient(0, baseline - size * 0.75, 0, baseline);
+  blue.addColorStop(0, '#48c9f7');
+  blue.addColorStop(1, '#1c55bf');
+  ctx.fillStyle = blue;
+  ctx.fillText('Boga', cx, baseline);
+}
+
+/** Boga Cidre's body label: the blue name over a white glow and a red arc, "Cidre" in brown below. */
+function bogaLabelTexture(): THREE.CanvasTexture {
+  return labelTexture(
+    512,
+    160,
+    (ctx, cx) => {
+      glow(ctx, cx, 84, 118);
+      ctx.strokeStyle = '#d7262e';
+      ctx.lineWidth = 8;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.arc(cx, 104, 72, Math.PI * 1.17, Math.PI * 1.83);
+      ctx.stroke();
+      bogaWord(ctx, cx, 100, 76);
+      // "Cidre", leaning like handwriting, with a red swash under it.
+      ctx.save();
+      ctx.translate(cx + 26, 142);
+      ctx.transform(1, 0, -0.28, 1, 0, 0);
+      ctx.font = `700 42px "Fredoka", ${LABEL_FONT}`;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#5a2313';
+      ctx.fillText('Cidre', 0, 0);
+      ctx.restore();
+      ctx.strokeStyle = '#c9252c';
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.moveTo(cx - 40, 152);
+      ctx.quadraticCurveTo(cx + 20, 140, cx + 82, 128);
+      ctx.stroke();
+    },
+    bogaGold,
+  );
+}
+
+/** The neck label: the name again, small. */
+function bogaNeckTexture(): THREE.CanvasTexture {
+  return labelTexture(
+    256,
+    64,
+    (ctx, cx) => {
+      glow(ctx, cx, 34, 52);
+      bogaWord(ctx, cx, 46, 38);
+    },
+    bogaGold,
+  );
 }
 
 function lathe(points: [number, number][], segments = 24): THREE.LatheGeometry {
@@ -123,8 +216,8 @@ export class DrinkProp {
       case 'tea':
         this.buildTea();
         break;
-      case 'coke':
-        this.buildCoke();
+      case 'boga':
+        this.buildBoga();
         break;
       case 'chicha':
         this.buildChicha();
@@ -132,10 +225,10 @@ export class DrinkProp {
     }
     const chicha = kind === 'chicha';
     this.hit = new THREE.Mesh(
-      new THREE.CylinderGeometry(chicha ? 1.25 : 0.7, chicha ? 1.25 : 0.7, chicha ? 6.4 : kind === 'coke' ? 2.3 : 1.5, 12),
+      new THREE.CylinderGeometry(chicha ? 1.25 : 0.7, chicha ? 1.25 : 0.7, chicha ? 6.4 : kind === 'boga' ? 2.3 : 1.5, 12),
       new THREE.MeshBasicMaterial({ visible: false }),
     );
-    this.hit.position.y = chicha ? 3.2 : kind === 'coke' ? 1.1 : 0.7;
+    this.hit.position.y = chicha ? 3.2 : kind === 'boga' ? 1.1 : 0.7;
     this.hit.userData.drink = this;
     this.root.add(this.hit);
     this.root.traverse((o) => {
@@ -212,41 +305,53 @@ export class DrinkProp {
     this.steamAt = new THREE.Vector3(0, 0.85, 0);
   }
 
-  private buildCoke() {
-    const glass = new THREE.MeshPhongMaterial({ color: '#4a1f12', shininess: 90, specular: '#ffffff' });
+  /** Boga Cidre: a long-necked bottle of golden-brown cider soda, gold labels on the body and the neck. */
+  private buildBoga() {
+    const glass = new THREE.MeshPhongMaterial({ color: '#8c4c16', shininess: 90, specular: '#ffffff' });
     const bottle = new THREE.Mesh(
       lathe([
         [0, 0],
         [0.2, 0],
-        [0.24, 0.04],
-        [0.25, 0.2],
-        [0.21, 0.42],
-        [0.245, 0.62],
-        [0.25, 0.8],
-        [0.2, 0.98],
-        [0.12, 1.22],
-        [0.1, 1.38],
-        [0.12, 1.42],
-        [0.12, 1.48],
-        [0, 1.48],
+        [0.235, 0.03],
+        [0.24, 0.08],
+        [0.24, 0.6],
+        // A little waist, then the dimpled band.
+        [0.226, 0.65],
+        [0.236, 0.7],
+        [0.242, 0.76],
+        [0.236, 0.82],
+        // Shoulder and long neck.
+        [0.218, 0.88],
+        [0.17, 0.98],
+        [0.136, 1.06],
+        [0.113, 1.27],
+        [0.104, 1.43],
+        [0.12, 1.46],
+        [0.12, 1.53],
+        [0, 1.53],
       ]),
       glass,
     );
     addOutline(bottle, 0.02);
-    const label = new THREE.Mesh(new THREE.CylinderGeometry(0.258, 0.258, 0.2, 24, 1, true), toon('#ffffff', { map: labelTexture() }));
-    label.position.y = 0.71;
-    const shine = new THREE.Mesh(new THREE.CapsuleGeometry(0.03, 0.5, 3, 6), new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.45 }));
-    shine.position.set(-0.13, 0.3, -0.19);
+    const label = new THREE.Mesh(new THREE.CylinderGeometry(0.247, 0.247, 0.44, 32, 1, true), toon('#ffffff', { map: bogaLabelTexture() }));
+    label.position.y = 0.35;
+    const neckLabel = new THREE.Mesh(new THREE.CylinderGeometry(0.117, 0.141, 0.2, 24, 1, true), toon('#ffffff', { map: bogaNeckTexture() }));
+    neckLabel.position.y = 1.165;
+    const shineMat = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.45 });
+    const shine = new THREE.Mesh(new THREE.CapsuleGeometry(0.028, 0.42, 3, 6), shineMat);
+    shine.position.set(-0.135, 0.36, 0.19);
+    const shine2 = new THREE.Mesh(new THREE.CapsuleGeometry(0.022, 0.14, 3, 6), shineMat);
+    shine2.position.set(-0.135, 0.76, 0.195);
     const strawTex = stripes('#ffffff', '#e63946', 4, false);
     strawTex.repeat.set(8, 1);
     const straw = new THREE.Mesh(
       new THREE.TubeGeometry(
         new THREE.CatmullRomCurve3([
           new THREE.Vector3(0, 0.9, 0),
-          new THREE.Vector3(0, 1.6, 0),
-          new THREE.Vector3(0, 1.88, 0.03),
-          new THREE.Vector3(0, 2.0, 0.16),
-          new THREE.Vector3(0, 2.04, 0.34),
+          new THREE.Vector3(0, 1.66, 0),
+          new THREE.Vector3(0, 1.94, 0.03),
+          new THREE.Vector3(0, 2.06, 0.16),
+          new THREE.Vector3(0, 2.1, 0.34),
         ]),
         24,
         0.035,
@@ -254,8 +359,8 @@ export class DrinkProp {
       ),
       toon('#ffffff', { map: strawTex }),
     );
-    this.lift.add(bottle, label, shine, straw);
-    this.lip.set(0, 2.04, 0.36);
+    this.lift.add(bottle, label, neckLabel, shine, shine2, straw);
+    this.lip.set(0, 2.1, 0.36);
     this.tilt = 0.3;
   }
 

@@ -88,7 +88,7 @@ export interface BoardCallbacks {
 /** The home screen's regulars: who they are and what they drink. */
 const MENU_GUESTS: { character: CharacterId; skin: number; drink: DrinkId }[] = [
   { character: 'hajj', skin: 1, drink: 'chicha' },
-  { character: 'nejma', skin: 3, drink: 'coke' },
+  { character: 'nejma', skin: 3, drink: 'boga' },
   { character: 'wled', skin: 2, drink: 'tea' },
   { character: 'hajja', skin: 0, drink: 'express' },
 ];

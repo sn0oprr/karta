@@ -13,8 +13,8 @@ import {
   type RoomSettings,
   SKIN_TONES,
   type Welcome,
+  drinkFrom,
   isCharacter,
-  isDrink,
   isRoomCode,
   isSkin,
   normalizeRoomCode,
@@ -65,7 +65,7 @@ export function applyProfile(current: MemberProfile, raw: unknown): MemberProfil
     color: Number.isInteger(color) && color >= 0 && color < AVATAR_COLORS.length ? color : current.color,
     character: isCharacter(p.character) ? p.character : current.character,
     skin: isSkin(p.skin) ? p.skin : current.skin,
-    drink: isDrink(p.drink) ? p.drink : current.drink,
+    drink: drinkFrom(p.drink) ?? current.drink,
   };
 }
 

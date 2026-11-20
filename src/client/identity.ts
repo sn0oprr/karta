@@ -6,8 +6,8 @@ import {
   type Profile,
   REGULARS,
   SKIN_TONES,
+  drinkFrom,
   isCharacter,
-  isDrink,
   isSkin,
 } from '../shared/protocol';
 
@@ -60,7 +60,7 @@ function load(): StoredProfile {
           color: Number.isInteger(p.color) && p.color! >= 0 && p.color! < AVATAR_COLORS.length ? p.color! : 0,
           character: isCharacter(p.character) ? p.character : look.character,
           skin: isSkin(p.skin) ? p.skin : look.skin,
-          drink: isDrink(p.drink) ? p.drink : look.drink,
+          drink: drinkFrom(p.drink) ?? look.drink,
           named: !!p.named,
           // (Saved before this flag existed: a name from the list was given, anything else typed.)
           typed: typeof p.typed === 'boolean' ? p.typed : !NAMES.includes(name),

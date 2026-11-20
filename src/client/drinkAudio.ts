@@ -4,8 +4,8 @@
  * taps vary. Levels are evened out between the four recordings.
  */
 import type { DrinkId } from '../shared/protocol';
+import bogaUrl from './assets/sounds/boga.mp3';
 import chichaUrl from './assets/sounds/chicha.mp3';
-import cokeUrl from './assets/sounds/coke.mp3';
 import expressUrl from './assets/sounds/express.mp3';
 import teaUrl from './assets/sounds/tea.mp3';
 import { sfx } from './sfx';
@@ -27,7 +27,7 @@ const SOURCES: Record<DrinkId, Source> = {
   express: { url: expressUrl, threshold: -13, gap: 0.35, maxLen: 2.6, fallback: 1.5 },
   tea: { url: teaUrl, threshold: -14, gap: 0.45, maxLen: 2.4, fallback: 1.4 },
   chicha: { url: chichaUrl, threshold: -22, gap: 0.6, maxLen: 2.6, fallback: 1.9 },
-  coke: { url: cokeUrl, threshold: -30, gap: 1.0, maxLen: 2.6, fallback: 1.7 },
+  boga: { url: bogaUrl, threshold: -30, gap: 1.0, maxLen: 2.6, fallback: 1.7 },
 };
 
 class DrinkAudio {
