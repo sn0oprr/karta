@@ -123,6 +123,9 @@ export function heldCardTransform(i: number, count: number, out: { pos: THREE.Ve
   return out;
 }
 
+/** How far in front of the camera the local player's hand floats (it lives in camera space). */
+export const HAND_DEPTH = 9;
+
 /** Layout of the local player's hand in camera space. */
 export function myHandTransform(
   i: number,
@@ -131,7 +134,7 @@ export function myHandTransform(
   out: { pos: THREE.Vector3; rot: THREE.Euler; scale: number },
 ) {
   const aspect = view.width / view.height;
-  const dist = 9;
+  const dist = HAND_DEPTH;
   const halfH = Math.tan(THREE.MathUtils.degToRad(view.fov / 2)) * dist;
   const halfW = halfH * aspect;
   // Card size relative to the screen: fill a comfortable part of the bottom area.

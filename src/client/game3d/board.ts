@@ -36,6 +36,7 @@ import { DrinkProp, type Drinker, avatarDrinker, performSip } from './drinks';
 import { Confetti, Shockwave, Smoke } from './fx';
 import {
   BELOTE_CARD_EXTENT,
+  HAND_DEPTH,
   TABLE_SLOTS,
   avatarPosition,
   chichaPosition,
@@ -52,10 +53,10 @@ import {
   viewYaw,
 } from './layout';
 import type { Stage } from './stage';
-import { FELT_HALF, FRAME_MID, FRAME_TOP, TABLE_EXTENT, tableEdgePoints } from './table';
+import { FELT_HALF, FRAME_HALF, FRAME_MID, FRAME_TOP, TABLE_EXTENT, tableEdgePoints } from './table';
 import { TrumpToken } from './trumpToken';
 import { animator, ease, flatQuat, moveObject, standQuat, wait } from './tween';
-import { type Ball, type Pt2, type Pt3, type Rect, fitSeatView } from './viewFit';
+import { type Ball, type Pt2, type Pt3, type Rect, fitSeatView, seatViewRanges } from './viewFit';
 
 export interface BoardCallbacks {
   /** The local player wants to play a card. Resolve false if the server refused it. */
@@ -1548,8 +1549,6 @@ export class Board {
   private fitSeatCamera() {
     const W = Math.max(1, this.stage.width);
     const H = Math.max(1, this.stage.height);
-    const aspect = W / H;
-    const portrait = aspect < 0.8;
     const spectating = this.mySeat === null;
     const heads: Ball[] = [];
     for (let v = spectating ? 0 : 1; v < this.n; v++) heads.push(headBall(v, this.n));
@@ -1561,13 +1560,9 @@ export class Board {
       edge: tableEdgePoints(24).filter((p) => p.z < 0.25 * TABLE_EXTENT),
       hud: this.stage.overlay,
       hand: spectating ? null : this.handRect(),
-      // Seated players look across the table from about eye level, so they see the others' faces
-      // (a little higher on tall screens, where a flat view would squash the cards). Spectators
-      // look from higher up, over the near player's head.
-      pitch: spectating ? [56, 78, 68] : portrait ? [28, 48, 40] : [20, 40, 30],
-      fov: portrait ? [38, 62, 50] : [28, 50, 40],
-      sideTrim: portrait && !spectating ? 0.25 : 0,
-      targetZ: [-0.4 * TABLE_EXTENT, 0.7 * TABLE_EXTENT, 0],
+      // The hand's cards lean back a little: keep some room behind them.
+      handClear: spectating ? undefined : { point: { x: 0, y: FRAME_TOP, z: FRAME_HALF }, depth: HAND_DEPTH + 0.6 },
+      ...seatViewRanges(W / H, !spectating, TABLE_EXTENT),
     });
     const dir = new THREE.Vector3(0, Math.sin(view.pitch), Math.cos(view.pitch));
     this.camTarget.set(0, 0, view.targetZ);

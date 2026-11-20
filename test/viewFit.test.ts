@@ -1,7 +1,17 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { type Ball, type Pt3, type Rect, type SeatFitInput, fitSeatView, overlapArea, polygonRectOverlap } from '../src/client/game3d/viewFit';
-import { TABLE_EXTENT, tableEdgePoints } from '../src/client/game3d/table';
+import {
+  type Ball,
+  type Pt3,
+  type Rect,
+  type SeatFitInput,
+  fitSeatView,
+  overlapArea,
+  polygonRectOverlap,
+  seatViewRanges,
+} from '../src/client/game3d/viewFit';
+import { HAND_DEPTH } from '../src/client/game3d/layout';
+import { FRAME_HALF, FRAME_TOP, TABLE_EXTENT, tableEdgePoints } from '../src/client/game3d/table';
 
 // A 2v2 table as the board describes it: card area, opponents' heads, the far part of the square table.
 const CARDS: Pt3[] = [
@@ -14,8 +24,8 @@ const head = (x: number, z: number): Ball => ({ center: { x, y: 2.46, z }, radiu
 const HEADS = [head(7.09, 0), head(0, -7.09), head(-7.09, 0)];
 const EDGE: Pt3[] = tableEdgePoints(24).filter((p) => p.z < 0.25 * TABLE_EXTENT);
 
+/** What the board asks of the camera for a seated player. */
 function input(width: number, height: number, hud: Rect[], hand: Rect | null): SeatFitInput {
-  const portrait = width / height < 0.8;
   return {
     width,
     height,
@@ -24,9 +34,8 @@ function input(width: number, height: number, hud: Rect[], hand: Rect | null): S
     edge: EDGE,
     hud,
     hand,
-    pitch: portrait ? [28, 48, 40] : [20, 40, 30],
-    fov: portrait ? [38, 62, 50] : [28, 50, 40],
-    targetZ: [-0.4 * TABLE_EXTENT, 0.7 * TABLE_EXTENT, 0],
+    handClear: { point: { x: 0, y: FRAME_TOP, z: FRAME_HALF }, depth: HAND_DEPTH + 0.6 },
+    ...seatViewRanges(width / height, true, TABLE_EXTENT),
   };
 }
 
@@ -41,17 +50,18 @@ function camera(inp: SeatFitInput) {
     const q = new THREE.Vector3(p.x, p.y, p.z).project(cam);
     return { x: (q.x * 0.5 + 0.5) * inp.width, y: (0.5 - q.y * 0.5) * inp.height };
   };
+  /** Distance in front of the camera, along its axis. */
+  const depth = (p: Pt3) => -new THREE.Vector3(p.x, p.y, p.z).applyMatrix4(cam.matrixWorldInverse).z;
   const headRect = (b: Ball): Rect => {
     const c = px(b.center);
-    const depth = -new THREE.Vector3(b.center.x, b.center.y, b.center.z).applyMatrix4(cam.matrixWorldInverse).z;
-    const r = (b.radius / (depth * Math.tan(THREE.MathUtils.degToRad(v.fov / 2)))) * 0.5 * inp.height;
+    const r = (b.radius / (depth(b.center) * Math.tan(THREE.MathUtils.degToRad(v.fov / 2)))) * 0.5 * inp.height;
     return { left: c.x - r, top: c.y - r, right: c.x + r, bottom: c.y + r };
   };
-  return { view: v, px, headRect };
+  return { view: v, px, depth, headRect };
 }
 
 function expectFramed(inp: SeatFitInput) {
-  const { view, px, headRect } = camera(inp);
+  const { view, px, depth, headRect } = camera(inp);
   expect(view.relaxed).toBe(0);
   const poly = inp.cards.map(px);
   for (const p of poly) {
@@ -65,22 +75,37 @@ function expectFramed(inp: SeatFitInput) {
     expect(p.x).toBeLessThanOrEqual(inp.width);
     expect(p.y).toBeGreaterThanOrEqual(0);
   }
+  // The table behind the hand, which floats in front of the camera.
+  if (inp.handClear) expect(depth(inp.handClear.point)).toBeGreaterThanOrEqual(inp.handClear.depth - 1e-6);
   // Table cards clear of the HUD and the hand.
   for (const r of [...inp.hud, ...(inp.hand ? [inp.hand] : [])]) expect(polygonRectOverlap(poly, r)).toBe(0);
-  // Every face on screen and clear of the HUD (hair may be trimmed at the top).
+  // Every face on screen and clear of the HUD (hair may be trimmed at the top, and the back of the
+  // side players' heads at the screen's edges).
   for (const b of inp.heads) {
     const r = headRect(b);
+    const cut = (r.right - r.left) * (inp.sideTrim ?? 0);
+    if (b.center.x < -0.5) r.left += cut;
+    else if (b.center.x > 0.5) r.right -= cut;
     expect(r.left).toBeGreaterThanOrEqual(0);
     expect(r.right).toBeLessThanOrEqual(inp.width);
     expect(r.bottom).toBeLessThanOrEqual(inp.height);
     expect((r.top + r.bottom) / 2).toBeGreaterThan(0);
     for (const k of inp.hud) expect(overlapArea({ ...r, top: r.top + (r.bottom - r.top) * 0.2 }, k)).toBe(0);
+    // The eyes, on the side of the head facing the table's centre.
+    const inward = Math.hypot(b.center.x, b.center.z);
+    const eyes = px({
+      x: b.center.x - (b.center.x / inward) * 0.6 * b.radius,
+      y: b.center.y,
+      z: b.center.z - (b.center.z / inward) * 0.6 * b.radius,
+    });
+    expect(eyes.x).toBeGreaterThan(0);
+    expect(eyes.x).toBeLessThan(inp.width);
   }
   return view;
 }
 
 describe('seat camera fit', () => {
-  it('shows both side opponents on a portrait phone', () => {
+  it("comes close on a portrait phone, with the side opponents' faces at the edges", () => {
     const W = 390;
     const H = 844;
     const hud = [
@@ -92,6 +117,8 @@ describe('seat camera fit', () => {
     ];
     const view = expectFramed(input(W, H, hud, { left: 25, top: 702, right: 365, bottom: H }));
     expect(view.area).toBeGreaterThan(20000);
+    // Close behind the seat, with a wide lens (it used to stand some 40 units back).
+    expect(view.distance).toBeLessThan(28);
   });
 
   it('keeps the cards above the hand on a short landscape phone', () => {
