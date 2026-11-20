@@ -94,11 +94,50 @@ export interface SeatFitInput {
    */
   targetZ: [min: number, max: number, preferred: number];
   /**
-   * Part of a head's ball, on the side nearer a screen edge, that may go off screen: the back of
-   * the hair of the players sitting left and right, who face the table. Narrow screens use it to
-   * come closer. Defaults to 0.
+   * Part of the head's ball of a player sitting left or right that may go past the screen's edge:
+   * the back of their head, as they face the table (up to about 0.6 keeps their eyes on screen).
+   * Narrow screens use it to come closer. Defaults to 0.
    */
   sideTrim?: number;
+  /**
+   * Keeps the table behind the local hand, which floats `depth` in front of the camera: `point`,
+   * the part of the table nearest the camera (the top of its near rim), must stay further away, or
+   * a low camera close to the table would sink the hand into it.
+   */
+  handClear?: { point: Pt3; depth: number };
+}
+
+type SearchRange = [min: number, max: number, preferred: number];
+
+/**
+ * The ranges the seat camera searches, for a screen of this shape (width / height). Seated players
+ * look across the table from about eye level, so they see the others' faces (a little higher on
+ * tall screens, where a flat view would squash the cards); spectators look from higher up, over
+ * the near player's head. On a phone held upright, the players sitting left and right are what
+ * keeps the camera back, as the screen is narrow and they sit far apart: there a wide lens brings
+ * it close and low behind the seat, with their faces at the screen's edges and the backs of their
+ * heads past them.
+ */
+export function seatViewRanges(
+  aspect: number,
+  seated: boolean,
+  tableExtent: number,
+): Pick<SeatFitInput, 'pitch' | 'fov' | 'targetZ' | 'sideTrim'> {
+  const portrait = aspect < 0.8;
+  // 0 for a portrait tablet's shape and wider, 1 for a phone's, blended in between.
+  const t = Math.min(1, Math.max(0, (0.75 - aspect) / (0.75 - 0.56)));
+  const phone = seated ? t * t * (3 - 2 * t) : 0;
+  const mix = (a: SearchRange, b: SearchRange): SearchRange => [
+    a[0] + (b[0] - a[0]) * phone,
+    a[1] + (b[1] - a[1]) * phone,
+    a[2] + (b[2] - a[2]) * phone,
+  ];
+  return {
+    pitch: !seated ? [56, 78, 68] : portrait ? mix([28, 48, 40], [34, 40, 37]) : [20, 40, 30],
+    fov: portrait ? mix([38, 62, 50], [60, 84, 76]) : [28, 50, 40],
+    targetZ: [-(0.4 + 0.2 * phone) * tableExtent, 0.7 * tableExtent, 0],
+    sideTrim: portrait && seated ? 0.25 + 0.25 * phone : 0,
+  };
 }
 
 export interface Ball {
@@ -142,11 +181,16 @@ class Probe {
     this.kx = this.ky / (this.w / this.h);
   }
 
+  /** Distance in front of the camera, along its axis. */
+  depth(p: Pt3): number {
+    return -(p.y - this.cy) * this.sp - (p.z - this.cz) * this.cp;
+  }
+
   /** CSS px into `out`; false when the point is behind (or too close to) the camera. */
   project(p: Pt3, out: Pt2): boolean {
     const dy = p.y - this.cy;
     const dz = p.z - this.cz;
-    const depth = -dy * this.sp - dz * this.cp;
+    const depth = this.depth(p);
     if (depth < 0.5) return false;
     const yc = dy * this.cp - dz * this.sp;
     out.x = ((p.x * this.kx) / depth) * 0.5 * this.w + 0.5 * this.w;
@@ -157,7 +201,7 @@ class Probe {
   /** Screen box around a ball, or null when it is behind the camera. */
   ballRect(b: Ball, tmp: Pt2): Rect | null {
     if (!this.project(b.center, tmp)) return null;
-    const depth = -(b.center.y - this.cy) * this.sp - (b.center.z - this.cz) * this.cp;
+    const depth = this.depth(b.center);
     // A ball off the view axis projects a little wider than its radius: allow a bit for that.
     const r = ((b.radius * 1.06 * this.ky) / depth) * 0.5 * this.h;
     return { left: tmp.x - r, top: tmp.y - r, right: tmp.x + r, bottom: tmp.y + r };
@@ -177,10 +221,10 @@ const WHOLE_HEAD_PRICE = 0.85;
 
 /**
  * Searches pitch, field of view, target and distance for the view where the card area is largest
- * on screen, subject to: the card area clear of the HUD and the hand; every head on screen and
- * clear of the HUD (whole, unless trimming the top of the hair buys clearly bigger cards); the far
- * side of the table on screen. Constraints are dropped one by one if no view satisfies them all,
- * so there is always an answer.
+ * on screen, subject to: the card area clear of the HUD and the hand; the table behind the hand;
+ * every head on screen and clear of the HUD (whole, unless trimming the top of the hair buys
+ * clearly bigger cards); the far side of the table on screen. Constraints are dropped one by one if
+ * no view satisfies them all (those about the hand never are), so there is always an answer.
  */
 export function fitSeatView(input: SeatFitInput): SeatView {
   const { width: W, height: H } = input;
@@ -202,6 +246,7 @@ export function fitSeatView(input: SeatFitInput): SeatView {
       if (!probe.project(input.cards[i]!, p)) return false;
       if (p.x < EDGE_MARGIN || p.x > W - EDGE_MARGIN || p.y < EDGE_MARGIN || p.y > H - EDGE_MARGIN) return false;
     }
+    if (input.handClear && probe.depth(input.handClear.point) < input.handClear.depth) return false;
     for (const r of relax >= 3 ? cardBlockers.slice(input.hud.length) : cardBlockers) {
       if (polygonRectOverlap(poly, r) > 0) return false;
     }
@@ -215,9 +260,10 @@ export function fitSeatView(input: SeatFitInput): SeatView {
         continue;
       }
       box.top += (box.bottom - box.top) * trim;
+      // The back of the head of a player sitting left or right may go past the screen's edge.
       const cut = (box.right - box.left) * sideTrim;
-      if (tmp.x < W / 2) box.left += cut;
-      else box.right -= cut;
+      if (head.center.x < -0.5) box.left += cut;
+      else if (head.center.x > 0.5) box.right -= cut;
       if (box.left < EDGE_MARGIN || box.right > W - EDGE_MARGIN || box.top < EDGE_MARGIN || box.bottom > H - EDGE_MARGIN) return false;
       if (relax < 1) for (const k of headBlockers) if (overlapArea(box, k) > 0) return false;
     }
