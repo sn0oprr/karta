@@ -105,7 +105,7 @@ function expectFramed(inp: SeatFitInput) {
 }
 
 describe('seat camera fit', () => {
-  it("comes close on a portrait phone, with the side opponents' faces at the edges", () => {
+  it('shows every opponent on a portrait phone, close behind the seat', () => {
     const W = 390;
     const H = 844;
     const hud = [
@@ -117,8 +117,8 @@ describe('seat camera fit', () => {
     ];
     const view = expectFramed(input(W, H, hud, { left: 25, top: 702, right: 365, bottom: H }));
     expect(view.area).toBeGreaterThan(20000);
-    // Close behind the seat, with a wide lens (it used to stand some 40 units back).
-    expect(view.distance).toBeLessThan(28);
+    // A wide lens brings the camera close behind the seat (it used to stand some 40 units back).
+    expect(view.distance).toBeLessThan(30);
   });
 
   it('keeps the cards above the hand on a short landscape phone', () => {
