@@ -32,4 +32,6 @@ export const TIMING = {
   minDelay: 400,
   /** Results pause when only bots are seated (spectators watching). */
   botsOnlyPause: 7000,
+  /** Shortest gap between two updates of the list of tables sent to the home screens. */
+  listUpdate: 1000,
 };

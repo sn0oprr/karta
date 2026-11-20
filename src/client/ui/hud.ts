@@ -266,7 +266,7 @@ export class Hud {
   /** Updates scores / banner from the room as displayed on the board. */
   update(room: RoomView, opts: { myTurnReady: boolean; busy: boolean; clockOffset: number }) {
     this.code = room.code;
-    this.codeChip.textContent = `# ${room.code}`;
+    this.codeChip.textContent = `${room.settings.privacy === 'private' ? '🔒' : '#'} ${room.code}`;
     this.syncLastTrick(room);
     const g = room.game;
     const n = room.seats.length;

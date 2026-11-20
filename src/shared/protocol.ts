@@ -39,6 +39,13 @@ export type TurnTimer = (typeof TURN_TIMERS)[number];
 export const BOT_LEVELS = ['easy', 'normal', 'hard'] as const;
 export type BotLevelSetting = (typeof BOT_LEVELS)[number];
 
+/**
+ * Every table shows up in the list of tables. Anyone can join a public one from there; a private one
+ * is listed without its code, and only people who type the code (or have the link) get in.
+ */
+export const ROOM_PRIVACY = ['public', 'private'] as const;
+export type RoomPrivacy = (typeof ROOM_PRIVACY)[number];
+
 export interface RoomSettings {
   game: GameKind;
   mode: GameMode;
@@ -47,6 +54,7 @@ export interface RoomSettings {
   /** Seconds per turn; 0 = unlimited. When time runs out the move is played automatically. */
   turnSeconds: TurnTimer;
   botLevel: BotLevelSetting;
+  privacy: RoomPrivacy;
 }
 
 export const DEFAULT_SETTINGS: RoomSettings = {
@@ -55,6 +63,8 @@ export const DEFAULT_SETTINGS: RoomSettings = {
   targetScore: 21,
   turnSeconds: 0,
   botLevel: 'normal',
+  // Clients that do not say (older builds) keep what tables always were: only the code gets you in.
+  privacy: 'private',
 };
 
 export function seatCount(mode: GameMode): 2 | 4 {
@@ -254,6 +264,30 @@ export interface RoomView {
   version: number;
 }
 
+/** A table as the list of tables shows it. */
+export interface RoomListing {
+  /** Identifies the table in the list (it is not the code, which private tables keep to themselves). */
+  id: string;
+  /** The code to join with; null for a private table. */
+  code: string | null;
+  privacy: RoomPrivacy;
+  game: GameKind;
+  mode: GameMode;
+  targetScore: number;
+  phase: RoomPhase;
+  /** The hand being played (0 in the lobby). */
+  round: number;
+  host: { name: string; character: CharacterId; skin: number; color: number } | null;
+  /** Seats at the table, and how many are taken (by people or bots), and by bots. */
+  seats: number;
+  seated: number;
+  bots: number;
+  spectators: number;
+}
+
+/** The most tables the list shows. */
+export const LISTING_MAX = 60;
+
 /** Deal as seen by one viewer: other players' cards stay hidden. */
 export interface DealEvent {
   kind: 'deal';
@@ -390,8 +424,12 @@ export type Ack<T = object> = (res: ({ ok: true } & T) | { ok: false; error: str
 export interface ClientToServer {
   profile: (p: Profile) => void;
   create: (p: { settings?: Partial<RoomSettings> }, ack: Ack<{ code: string }>) => void;
-  join: (p: { code: string; spectate?: boolean }, ack: Ack<{ code: string }>) => void;
+  /** Joins with a code. `listId` names the table picked in the list: the code must be that table's. */
+  join: (p: { code: string; spectate?: boolean; listId?: string }, ack: Ack<{ code: string }>) => void;
   leave: () => void;
+  /** The list of tables, then a `rooms` update whenever it changes, until `rooms:unwatch` or joining a table. */
+  'rooms:watch': (ack: Ack<{ rooms: RoomListing[] }>) => void;
+  'rooms:unwatch': () => void;
   sit: (p: { seat: number }, ack: Ack) => void;
   stand: (ack: Ack) => void;
   settings: (p: Partial<RoomSettings>, ack: Ack) => void;
@@ -418,6 +456,8 @@ export interface ClientToServer {
 
 export interface ServerToClient {
   welcome: (w: Welcome) => void;
+  /** The list of tables changed (only for sockets watching it). */
+  rooms: (list: RoomListing[]) => void;
   room: (m: RoomMessage) => void;
   left: (p: { reason: 'kicked' | 'closed' | 'left' | 'elsewhere' }) => void;
   chat: (m: ChatMessage) => void;

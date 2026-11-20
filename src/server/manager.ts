@@ -6,10 +6,12 @@ import {
   DRINKS,
   type DrinkId,
   type HandshakeAuth,
+  LISTING_MAX,
   NAME_MAX,
   REGULARS,
   ROOM_CODE_ALPHABET,
   ROOM_CODE_LENGTH,
+  type RoomListing,
   type RoomSettings,
   SKIN_TONES,
   type Welcome,
@@ -20,6 +22,13 @@ import {
   normalizeRoomCode,
 } from '../shared/protocol';
 import { type IO, type MemberProfile, Room, RoomError, type Sock } from './room';
+import { TIMING } from './timing';
+
+/** The Socket.IO room of the sockets watching the list of tables (room codes are upper case: no clash). */
+const BROWSE = 'rooms:list';
+
+/** Wrong or unknown codes one connection may try per minute (private tables are listed: no guessing). */
+export const JOIN_FAILS_MAX = 10;
 
 export function secureRandom(): number {
   const buf = new Uint32Array(1);
@@ -74,6 +83,8 @@ interface SocketData {
   profile: MemberProfile;
   room: string | null;
   createdRooms: number[];
+  /** When this connection tried a code that let it in nowhere. */
+  failedJoins: number[];
 }
 
 export interface ManagerOptions {
@@ -89,6 +100,10 @@ export class RoomManager {
   private readonly emptyTtl: number;
   private readonly rand: () => number;
   private sweepTimer: ReturnType<typeof setInterval>;
+  private listTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastListSent = 0;
+  /** The list as last sent to the watchers; null: send the next one whatever it is. */
+  private lastList: string | null = null;
 
   constructor(
     private readonly io: IO,
@@ -110,6 +125,7 @@ export class RoomManager {
         profile: applyProfile({ name: 'Player', color: 0, ...defaultLook(id) }, auth),
         room: null,
         createdRooms: [],
+        failedJoins: [],
       };
       socket.data = data;
       next();
@@ -119,6 +135,8 @@ export class RoomManager {
 
   stop() {
     clearInterval(this.sweepTimer);
+    if (this.listTimer) clearTimeout(this.listTimer);
+    this.listTimer = null;
     for (const room of this.rooms.values()) room.destroy();
     this.rooms.clear();
   }
@@ -146,8 +164,52 @@ export class RoomManager {
       if (room.connectedHumans().length === 0 && now - room.lastActivity > this.emptyTtl) {
         room.destroy();
         this.rooms.delete(room.code);
+        this.listChanged();
       }
     }
+  }
+
+  /**
+   * The list of tables: those with someone connected, the ones you can sit at first (public before
+   * private), then the newest first.
+   */
+  listings(): RoomListing[] {
+    const rank = (r: Room) => (r.phase === 'lobby' && r.seats.some((s) => s === null) ? 0 : 2) + (r.settings.privacy === 'public' ? 0 : 1);
+    return [...this.rooms.values()]
+      .filter((r) => r.connectedHumans().length > 0)
+      .sort((a, b) => rank(a) - rank(b) || b.createdAt - a.createdAt)
+      .slice(0, LISTING_MAX)
+      .map((r) => r.listing());
+  }
+
+  private watchers(): number {
+    return this.io.sockets.adapter.rooms.get(BROWSE)?.size ?? 0;
+  }
+
+  /** Something in a table changed: the watchers get the new list (if it differs), at most once per `TIMING.listUpdate`. */
+  private listChanged = () => {
+    if (this.listTimer) return;
+    if (this.watchers() === 0) {
+      this.lastList = null;
+      return;
+    }
+    const wait = Math.max(0, this.lastListSent + TIMING.listUpdate - Date.now());
+    this.listTimer = setTimeout(() => this.sendList(), wait);
+    this.listTimer.unref?.();
+  };
+
+  private sendList() {
+    this.listTimer = null;
+    if (this.watchers() === 0) {
+      this.lastList = null;
+      return;
+    }
+    const list = this.listings();
+    const json = JSON.stringify(list);
+    if (json === this.lastList) return;
+    this.lastList = json;
+    this.lastListSent = Date.now();
+    this.io.to(BROWSE).emit('rooms', list);
   }
 
   private onEmpty = (room: Room) => {
@@ -209,6 +271,7 @@ export class RoomManager {
         io: this.io,
         rand: this.rand,
         onEmpty: this.onEmpty,
+        onChange: this.listChanged,
       });
       this.rooms.set(code, room);
       try {
@@ -217,19 +280,35 @@ export class RoomManager {
         /* ignore invalid initial settings */
       }
       data.room = code;
+      void socket.leave(BROWSE);
       room.join(data.id, data.profile, socket, false);
       ack({ ok: true, code });
     });
 
     socket.on('join', (p, ack) => {
       if (typeof ack !== 'function') return;
+      const now = Date.now();
+      data.failedJoins = data.failedJoins.filter((t) => now - t < 60_000);
+      if (data.failedJoins.length >= JOIN_FAILS_MAX) {
+        ack({ ok: false, error: 'Too many wrong codes, wait a minute.' });
+        return;
+      }
       const code = normalizeRoomCode(String(p?.code ?? ''));
       if (!isRoomCode(code)) {
         ack({ ok: false, error: 'That room code does not look right.' });
         return;
       }
       const room = this.rooms.get(code);
+      // Picked in the list of tables: the code must be that table's.
+      const listId = typeof p?.listId === 'string' ? p.listId : null;
+      if (listId !== null && room?.listId !== listId) {
+        data.failedJoins.push(now);
+        const listed = [...this.rooms.values()].some((r) => r.listId === listId);
+        ack({ ok: false, error: listed ? 'Wrong code for this table.' : 'That table has closed.' });
+        return;
+      }
       if (!room) {
+        data.failedJoins.push(now);
         ack({ ok: false, error: 'Room not found — it may have expired.' });
         return;
       }
@@ -237,6 +316,7 @@ export class RoomManager {
       try {
         room.join(data.id, data.profile, socket, !!p?.spectate);
         data.room = code;
+        void socket.leave(BROWSE);
         ack({ ok: true, code });
       } catch (err) {
         ack({ ok: false, error: err instanceof RoomError ? err.message : 'Could not join.' });
@@ -244,6 +324,15 @@ export class RoomManager {
     });
 
     socket.on('leave', () => leaveCurrent());
+
+    socket.on('rooms:watch', (ack) => {
+      if (typeof ack !== 'function') return;
+      void socket.join(BROWSE);
+      // The newcomer gets the list now; the next change goes to everyone, whatever was sent before.
+      this.lastList = null;
+      ack({ ok: true, rooms: this.listings() });
+    });
+    socket.on('rooms:unwatch', () => void socket.leave(BROWSE));
 
     socket.on('sit', guard((room, p: { seat: number }) => room.sit(data.id, Number(p?.seat))));
     socket.on('stand', guard((room) => room.stand(data.id)));

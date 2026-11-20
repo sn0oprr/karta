@@ -10,6 +10,7 @@ import {
   type GameView,
   type ClientToServer,
   type GameEvent,
+  type RoomListing,
   type RoomView,
   type ServerToClient,
   type Welcome,
@@ -19,6 +20,7 @@ import {
   isSkin,
 } from '../src/shared/protocol';
 import { type KartaServer, startServer } from '../src/server/index';
+import { JOIN_FAILS_MAX } from '../src/server/manager';
 import { SIP_TIMING, TIMING } from '../src/server/room';
 import { createTable } from '../src/server/tables';
 import { seededRandom } from '../src/shared/cards';
@@ -33,6 +35,9 @@ class TestClient {
   emotes: { from: string; id: string }[] = [];
   sips: string[] = [];
   signals: { from: string; data: unknown }[] = [];
+  /** The list of tables, as last received (from 'rooms:watch', then the updates). */
+  list: RoomListing[] | null = null;
+  listUpdates = 0;
   left: string | null = null;
   welcome: Welcome | null = null;
   private listeners = new Set<() => void>();
@@ -43,6 +48,11 @@ class TestClient {
       transports: ['websocket'],
       forceNew: true,
       reconnection: false,
+    });
+    this.socket.on('rooms', (list) => {
+      this.list = list;
+      this.listUpdates++;
+      this.notify();
     });
     this.socket.on('sip', (p) => {
       this.sips.push(p.from);
@@ -107,6 +117,20 @@ class TestClient {
       if (payload === undefined) s.emit(event, resolve);
       else s.emit(event, payload, resolve);
     });
+  }
+
+  /** Starts watching the list of tables. */
+  async watchRooms() {
+    const res = await this.call<{ ok: boolean; rooms: RoomListing[] }>('rooms:watch');
+    expect(res.ok).toBe(true);
+    this.list = res.rooms;
+    this.notify();
+    return res.rooms;
+  }
+
+  /** The table with this code (public) or list id in the list of tables. */
+  listed(key: { code?: string; id?: string }): RoomListing | undefined {
+    return this.list?.find((r) => (key.code !== undefined && r.code === key.code) || (key.id !== undefined && r.id === key.id));
   }
 
   close() {
@@ -495,6 +519,96 @@ describe('server', () => {
       Object.assign(SIP_TIMING, saved);
     }
   });
+  it('lists public and private tables live; a private one hides its code and needs it to get in', async () => {
+    const browser = client('tess-secret', 'Tess');
+    await browser.waitFor(() => browser.welcome, 4000, 'welcome');
+    await browser.watchRooms();
+
+    // A public Chkobba table shows up with its code, so anyone can join it straight from the list.
+    const uma = client('uma-secret', 'Uma', { character: 'hajj', skin: 1 });
+    const pub = (await uma.call<{ ok: boolean; code: string }>('create', { settings: { game: 'chkobba', mode: '1v1', privacy: 'public' } })).code;
+    const pubListed = await browser.waitFor(() => browser.listed({ code: pub }), 4000, 'public table listed');
+    expect(pubListed).toMatchObject({
+      privacy: 'public',
+      game: 'chkobba',
+      mode: '1v1',
+      phase: 'lobby',
+      seats: 2,
+      seated: 1,
+      bots: 0,
+      host: { name: 'Uma', character: 'hajj', skin: 1 },
+    });
+
+    // A private Belote table is listed too, but without its code.
+    const vic = client('vic-secret', 'Vic');
+    const updates = browser.listUpdates;
+    const priv = (await vic.call<{ ok: boolean; code: string }>('create', { settings: { game: 'belote', privacy: 'private' } })).code;
+    await vic.waitFor(() => vic.room?.code === priv, 4000, 'private room');
+    const privListed = await browser.waitFor(
+      () => browser.listUpdates > updates && browser.list!.find((r) => r.host?.name === 'Vic' && r.privacy === 'private'),
+      4000,
+      'private table listed',
+    );
+    expect(privListed).toMatchObject({ code: null, game: 'belote', mode: '2v2', seats: 4, seated: 1 });
+    expect(JSON.stringify(browser.list)).not.toContain(priv);
+    // Tables you can sit at come first, public before private.
+    const order = browser.list!.map((r) => r.id);
+    expect(order.indexOf(pubListed.id)).toBeLessThan(order.indexOf(privListed.id));
+
+    // Picking the private table: the code must be that table's.
+    expect(await browser.call('join', { code: pub, listId: privListed.id })).toEqual({ ok: false, error: 'Wrong code for this table.' });
+    expect(await browser.call('join', { code: pub, listId: 'gone-table' })).toEqual({ ok: false, error: 'That table has closed.' });
+    expect(browser.room).toBeNull();
+    expect(await browser.call('join', { code: priv.toLowerCase(), listId: privListed.id })).toEqual({ ok: true, code: priv });
+    await browser.waitFor(() => browser.room?.code === priv && browser.room.you.seat !== null, 4000, 'seated at the private table');
+    // Sitting at a table ends the watching.
+    expect(server.io.sockets.adapter.rooms.get('rooms:list')?.has(browser.socket.id!) ?? false).toBe(false);
+
+    // Someone else joins the public table from the list: the list follows the seats.
+    const walt = client('walt-secret', 'Walt');
+    await walt.watchRooms();
+    expect(walt.listed({ id: privListed.id })).toMatchObject({ seated: 2, code: null });
+    expect(await walt.call('join', { code: pub, listId: pubListed.id })).toMatchObject({ ok: true });
+    await walt.waitFor(() => walt.room?.you.seat === 1, 4000, 'Walt seated');
+    const xena = client('xena-secret', 'Xena');
+    await xena.watchRooms();
+    expect(xena.listed({ code: pub })).toMatchObject({ seated: 2, seats: 2 });
+    expect(await uma.call('start')).toEqual({ ok: true });
+    await xena.waitFor(() => xena.listed({ code: pub })?.phase === 'playing', 4000, 'listed as playing');
+    expect(xena.listed({ code: pub })!.round).toBe(1);
+
+    // Only the host decides, in the lobby; making the table public shows its code.
+    expect((await browser.call('settings', { privacy: 'public' })).ok).toBe(false);
+    expect((await vic.call('settings', { privacy: 'secret' })).ok).toBe(false);
+    expect(await vic.call('settings', { privacy: 'public' })).toEqual({ ok: true });
+    await xena.waitFor(() => xena.listed({ id: privListed.id })?.code === priv, 4000, 'code shown once public');
+    expect(xena.listed({ id: privListed.id })!.privacy).toBe('public');
+
+    // Tables with nobody connected leave the list.
+    uma.socket.emit('leave');
+    walt.socket.emit('leave');
+    await xena.waitFor(() => !xena.listed({ id: pubListed.id }), 4000, 'empty table unlisted');
+    xena.socket.emit('rooms:unwatch');
+    await new Promise((r) => setTimeout(r, 30));
+    expect(server.io.sockets.adapter.rooms.get('rooms:list')?.has(xena.socket.id!) ?? false).toBe(false);
+  });
+
+  it('stops a connection that keeps guessing codes', async () => {
+    const host = client('yann-secret', 'Yann');
+    const code = (await host.call<{ ok: boolean; code: string }>('create', {})).code;
+    const guesser = client('zoe-secret', 'Zoe');
+    const watched = await guesser.watchRooms();
+    const listId = watched.find((r) => r.host?.name === 'Yann')!.id;
+    for (let i = 0; i < JOIN_FAILS_MAX; i++) {
+      const guess = `${'ABCDE'.slice(0, 4)}${'FGHJKLMNPQ'[i]}`;
+      expect((await guesser.call('join', { code: guess === code ? 'ZZZZZ' : guess, listId })).ok).toBe(false);
+    }
+    expect(await guesser.call('join', { code, listId })).toEqual({ ok: false, error: 'Too many wrong codes, wait a minute.' });
+    // Somebody else, with the right code, is let in.
+    const friend = client('ada-secret', 'Ada');
+    expect(await friend.call('join', { code, listId })).toMatchObject({ ok: true });
+  });
+
   it('switches a table to Belote: 2 vs 2, played to 1000, 1500 or 2000', async () => {
     const host = client('belo-secret', 'Belo');
     await host.call('create', { settings: { game: 'belote' } });

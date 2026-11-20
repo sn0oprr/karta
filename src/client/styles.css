@@ -291,8 +291,6 @@ select {
   position: absolute;
   inset: 0;
   display: flex;
-  align-items: center;
-  justify-content: center;
   padding: calc(16px + var(--safe-top)) 16px calc(16px + var(--safe-bottom));
   overflow-y: auto;
   background: radial-gradient(ellipse at center, rgba(255, 248, 236, 0) 30%, rgba(31, 98, 181, 0.18) 100%);
@@ -300,10 +298,203 @@ select {
 
 .home-inner {
   width: min(460px, 100%);
+  /* Centred while it fits, scrolls from the top once it does not. */
+  margin: auto;
   display: flex;
   flex-direction: column;
   gap: 18px;
   animation: pop-in 0.5s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+
+.home-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* Wide screens: the list of tables beside the create card. */
+@media (min-width: 980px) {
+  .home-inner {
+    width: min(960px, 100%);
+  }
+
+  .home-grid {
+    display: grid;
+    grid-template-columns: 460px minmax(0, 1fr);
+    align-items: start;
+  }
+
+  /* As tall as the create card (it adds nothing to the row's height); the list scrolls inside. */
+  .home-grid > .tables-card {
+    align-self: stretch;
+    height: 0;
+    min-height: 100%;
+  }
+
+  .home-grid .table-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+}
+
+.tables-card {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.tables-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 2px;
+}
+
+.table-count {
+  min-width: 1.9em;
+  padding: 0.05em 0.55em;
+  border: 2.5px solid var(--ink);
+  border-radius: 999px;
+  background: var(--yellow);
+  font-family: var(--font-title);
+  text-align: center;
+}
+
+.table-count:empty {
+  display: none;
+}
+
+.table-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px 4px 6px 2px;
+}
+
+.table-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 3px solid var(--ink);
+  border-radius: 16px;
+  background: var(--paper);
+  min-height: 64px;
+}
+
+.table-row.open:not(.private) {
+  background: #fff6c7;
+}
+
+.table-row.private {
+  background: repeating-linear-gradient(135deg, var(--paper) 0 12px, #f4efe4 12px 24px);
+}
+
+.table-row .name {
+  font-weight: 700;
+  font-size: 1.05rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.table-row .lock {
+  margin-right: 0.3em;
+  font-size: 0.9em;
+}
+
+.table-row .meta {
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  font-weight: 600;
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.table-row .meta.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+  white-space: normal;
+}
+
+.table-row .meta.badges .badge {
+  margin-left: 0;
+}
+
+/* The mode and privacy toggles fill their row (each takes a whole row once they wrap). */
+.table-options .seg {
+  flex: 1 1 auto;
+}
+
+.table-options .seg button {
+  flex: 1;
+}
+
+.table-row .btn {
+  flex: none;
+}
+
+.badge.open {
+  background: #c9f2d2;
+}
+
+.badge.full {
+  background: var(--cream-2);
+}
+
+.badge.live {
+  background: #ffd9b3;
+}
+
+.table-empty {
+  padding: 22px 10px;
+  text-align: center;
+  color: var(--ink-soft);
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.table-empty .big-emoji {
+  font-size: 2.2rem;
+  margin-bottom: 4px;
+}
+
+.spinner.small {
+  width: 30px;
+  height: 30px;
+  border-width: 4px;
+  margin-bottom: 8px;
+}
+
+.privacy-hint {
+  margin: 6px 0 0 0.2em;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.code-modal {
+  width: min(400px, 100%);
+}
+
+.code-modal .code-field {
+  font-size: 1.7rem;
+}
+
+.code-error {
+  min-height: 1.4em;
+  margin-top: 6px;
+  text-align: center;
+  color: var(--red);
+  font-weight: 700;
+  font-size: 0.92rem;
 }
 
 .logo {
@@ -402,6 +593,10 @@ select {
 
 .create-btn {
   min-width: 210px;
+}
+
+.home-card .create-btn {
+  flex: 1;
 }
 
 @media (max-width: 420px) {

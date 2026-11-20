@@ -6,6 +6,7 @@ import {
   GAME_INFO,
   type GameKind,
   type PlayerInfo,
+  ROOM_PRIVACY,
   type RoomSettings,
   type RoomView,
   TURN_TIMERS,
@@ -46,7 +47,11 @@ export async function shareRoom(code: string, game: GameKind = 'chkobba') {
 }
 
 /** A player's round badge: their character's portrait when available, else initials. */
-export function avatarDot(p: PlayerInfo | null, size = 34, portrait: string | null = null): HTMLElement {
+export function avatarDot(
+  p: (Pick<PlayerInfo, 'name' | 'color' | 'character'> & { bot?: boolean }) | null,
+  size = 34,
+  portrait: string | null = null,
+): HTMLElement {
   return h(
     'span',
     {
@@ -89,13 +94,19 @@ export class Lobby {
     const full = room.seats.every(Boolean);
     const mySeat = room.you.seat;
 
+    const isPrivate = room.settings.privacy === 'private';
     const codeCard = h(
       'div',
       { class: 'panel' },
       h(
         'div',
         { class: 'room-code' },
-        h('div', null, h('div', { class: 'label' }, `${GAME_INFO[room.settings.game].name} table`), h('div', { class: 'code' }, room.code)),
+        h(
+          'div',
+          null,
+          h('div', { class: 'label' }, `${GAME_INFO[room.settings.game].name} table · ${isPrivate ? '🔒 private' : '🌍 public'}`),
+          h('div', { class: 'code' }, room.code),
+        ),
         h(
           'div',
           { class: 'row' },
@@ -124,7 +135,13 @@ export class Lobby {
           ),
         ),
       ),
-      h('div', { class: 'muted', style: 'margin-top:8px' }, 'Friends join with the link or the code. Anyone extra can watch as a spectator.'),
+      h(
+        'div',
+        { class: 'muted', style: 'margin-top:8px' },
+        isPrivate
+          ? 'Listed without its code: friends join with the link or the code. Extra people watch as spectators.'
+          : 'Anyone can sit down from the list of tables, or with the link or the code. Extra people watch as spectators.',
+      ),
     );
 
     const seatRow = (seat: number) => {
@@ -258,6 +275,8 @@ export class Lobby {
         seg(TURN_TIMERS, s.turnSeconds, (v) => (v === 0 ? 'Off' : `${v}s`), (v) => this.actions.settings({ turnSeconds: v })),
         h('span', { class: 'label' }, 'Bots'),
         seg(BOT_LEVELS, s.botLevel, (v) => v[0]!.toUpperCase() + v.slice(1), (v) => this.actions.settings({ botLevel: v })),
+        h('span', { class: 'label' }, 'Table'),
+        seg(ROOM_PRIVACY, s.privacy, (v) => (v === 'public' ? '🌍 Public' : '🔒 Private'), (v) => this.actions.settings({ privacy: v })),
       ),
     );
 

@@ -4,7 +4,7 @@
 
 - **Two games, one table.** Pick Chkobba or Belote on the home screen; the host can switch games in the lobby.
 - **1 vs 1 or 2 vs 2** for Chkobba; Belote is played 2 vs 2. Partners sit opposite each other.
-- **Private tables.** Create a table and invite friends with a share link (`/room/ABCDE`) or the 5-letter code.
+- **Public and private tables.** Every table shows up live in the list of tables on the home screen, with its game, host, seats and whether a game is on. Anyone can join a **public** table from the list (or watch one that is full or playing). A **private** table is listed without its code: picking it asks for the 5-letter code, so only friends who have it (or the share link, `/room/ABCDE`) get in. The host chooses when creating the table and can switch in the lobby. A connection that keeps typing wrong codes is stopped for a minute.
 - **Spectators.** Anyone can watch with the link (`?watch=1`), or by joining a full table. Spectators can rotate the view and take over a bot's seat or an away player's seat.
 - **Voice chat.** Peer-to-peer WebRTC voice for players and spectators, with mute, deafen, per-person volume, push-to-talk (hold **V**), and avatar mouths that move when people talk.
 - **Bots** in three levels (easy, normal, hard) to fill empty seats, in both games. A bot also plays for anyone who drops out, until they reconnect.
@@ -93,13 +93,14 @@ Voice audio flows directly between browsers (a mesh, up to 12 people per table).
 
 ```
 src/shared/   rules engines (chkobba.ts, belote.ts), decks (cards.ts), bots (bot.ts, beloteBot.ts), socket protocol (protocol.ts)
-src/server/   Express + Socket.IO: rooms, seats, spectators, game flow, timers, bots, voice signaling; each game
-              plugs into the room through tables.ts
+src/server/   Express + Socket.IO: rooms, the live list of tables, seats, spectators, game flow, timers, bots,
+              voice signaling; each game plugs into the room through tables.ts
 src/client/
   game3d/     Three.js scene: terrace, table, card meshes and art, avatars and characters (the crew's beards,
               hair, glasses and outfits in features.ts and outfits.ts), drinks and smoke, animation system,
               board controller (Chkobba captures, Belote auction and tricks), trump token, portrait renderer
-  ui/         DOM overlay: home, lobby, café menu, HUD, name tags, bidding, results, chat, reactions, voice panel
+  ui/         DOM overlay: home (with the list of tables), lobby, café menu, HUD, name tags, bidding, results, chat,
+              reactions, voice panel
   voice.ts    WebRTC mesh voice chat
   sfx.ts      WebAudio procedural sound effects (drinkAudio.ts plays the drinking recordings)
 test/         vitest: engine, bots, end-to-end server tests with socket.io-client

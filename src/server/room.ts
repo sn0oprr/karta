@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import type { Server, Socket } from 'socket.io';
 import {
   AVATAR_COLORS,
@@ -13,6 +14,8 @@ import {
   GAME_INFO,
   type GameView,
   type PlayerInfo,
+  ROOM_PRIVACY,
+  type RoomListing,
   type RoomPhase,
   type RoomSettings,
   type RoomView,
@@ -90,10 +93,14 @@ export interface RoomDeps {
   io: IO;
   rand: () => number;
   onEmpty: (room: Room) => void;
+  /** Something the list of tables shows may have changed (called on every broadcast). */
+  onChange?: (room: Room) => void;
 }
 
 export class Room {
   readonly code: string;
+  /** Names the table in the list of tables without giving its code away. */
+  readonly listId = randomBytes(9).toString('base64url');
   hostId: string;
   settings: RoomSettings;
   phase: RoomPhase = 'lobby';
@@ -404,6 +411,10 @@ export class Room {
     if (patch.botLevel !== undefined) {
       if (!BOT_LEVELS.includes(patch.botLevel)) throw new RoomError('Invalid bot level.');
       next.botLevel = patch.botLevel;
+    }
+    if (patch.privacy !== undefined) {
+      if (!ROOM_PRIVACY.includes(patch.privacy)) throw new RoomError('Invalid privacy.');
+      next.privacy = patch.privacy;
     }
     if (next.mode !== this.settings.mode) {
       const n = seatCount(next.mode);
@@ -794,6 +805,28 @@ export class Room {
       const seat = this.seatOf(m.id);
       m.socket.emit('room', { room: this.viewFor(m.id), events: events.map((e) => personalizeEvent(e, seat)) });
     }
+    this.deps.onChange?.(this);
+  }
+
+  /** The table as the list of tables shows it: a private table keeps its code to itself. */
+  listing(): RoomListing {
+    const host = this.members.get(this.hostId);
+    const seated = this.seats.filter((s): s is Member => s !== null);
+    return {
+      id: this.listId,
+      code: this.settings.privacy === 'public' ? this.code : null,
+      privacy: this.settings.privacy,
+      game: this.settings.game,
+      mode: this.settings.mode,
+      targetScore: this.settings.targetScore,
+      phase: this.phase,
+      round: this.game?.round ?? 0,
+      host: host ? { name: host.name, character: host.character, skin: host.skin, color: host.color } : null,
+      seats: this.seats.length,
+      seated: seated.length,
+      bots: seated.filter((m) => m.bot).length,
+      spectators: this.spectators.filter((m) => m.connected).length,
+    };
   }
 
   private playerInfo(m: Member): PlayerInfo {

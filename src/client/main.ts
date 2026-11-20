@@ -11,7 +11,9 @@ import {
   GAME_INFO,
   type GameKind,
   type GameMode,
+  type RoomListing,
   type RoomMessage,
+  type RoomPrivacy,
   type RoomView,
   normalizeRoomCode,
 } from '../shared/protocol';
@@ -31,7 +33,7 @@ import { sfx } from './sfx';
 import { BidPanel } from './ui/bid';
 import { CafePicker } from './ui/cafe';
 import { h, modal, toast } from './ui/dom';
-import { renderHome } from './ui/home';
+import { type HomeScreen, renderHome } from './ui/home';
 import { Hud } from './ui/hud';
 import { Lobby } from './ui/lobby';
 import { ChatPanel, EmotePicker, VoicePanel, chooseCapture, showRules } from './ui/panels';
@@ -76,7 +78,7 @@ class App {
   displayed: RoomView | null = null;
   roomCode: string | null = null;
   private screen: 'home' | 'loading' | 'room' = 'home';
-  private homeEl: HTMLElement | null = null;
+  private home: HomeScreen | null = null;
   private loadingEl: HTMLElement | null = null;
   private roomLayer = h('div', { class: 'room-layer' });
   private wasMyTurn = false;
@@ -260,6 +262,7 @@ class App {
   private bindNet() {
     const s = this.net.socket;
     s.on('room', (m: RoomMessage) => this.onRoomMessage(m));
+    s.on('rooms', (list) => this.home?.setRooms(list));
     s.on('chat', (m) => this.chat.add(m));
     s.on('chatHistory', (list) => {
       this.chat.clear();
@@ -287,8 +290,9 @@ class App {
       this.goHome();
     });
     s.on('connect', () => {
-      // Re-attach to the room after a reconnect.
+      // Re-attach to the room after a reconnect (or watch the list of tables again).
       if (this.roomCode && this.screen === 'room') void this.net.call('join', { code: this.roomCode });
+      else if (this.screen === 'home') void this.watchRooms();
     });
     s.on('disconnect', () => {
       if (this.screen === 'room') toast('Connection lost — reconnecting…', 'error');
@@ -451,8 +455,12 @@ class App {
   }
 
   private clearScreens() {
-    this.homeEl?.remove();
-    this.homeEl = null;
+    if (this.home) {
+      this.home.close();
+      this.home.el.remove();
+      this.home = null;
+      this.net.socket.emit('rooms:unwatch');
+    }
     this.loadingEl?.remove();
     this.loadingEl = null;
   }
@@ -471,16 +479,26 @@ class App {
     this.voice.leave();
     this.board.showMenu();
     if (!opts.prefillCode && location.pathname !== '/') history.pushState(null, '', '/');
-    this.homeEl = renderHome(
+    this.home = renderHome(
       {
-        create: (game, mode) => this.createRoom(game, mode),
+        create: (game, mode, privacy) => this.createRoom(game, mode, privacy),
         join: (code, spectate) => this.joinRoom(code, spectate),
+        joinListed: (listing, code, spectate) => this.joinListed(listing, code, spectate),
         rules: (game) => showRules(game),
         profileChanged: () => this.net.updateProfile(),
+        portrait: (character, skin, color) => this.studio.characterURL(character, skin, color),
       },
       opts,
     );
-    uiRoot.appendChild(this.homeEl);
+    uiRoot.appendChild(this.home.el);
+    // (Not connected yet: the 'connect' handler asks for the list.)
+    if (this.net.socket.connected) void this.watchRooms();
+  }
+
+  /** The list of tables for the home screen, kept up to date by the server until we leave it. */
+  private async watchRooms() {
+    const res = await this.net.call<{ rooms: RoomListing[] }>('rooms:watch');
+    if (res.ok && this.screen === 'home') this.home?.setRooms(res.rooms);
   }
 
   private showLoading(text: string) {
@@ -490,12 +508,12 @@ class App {
     uiRoot.appendChild(this.loadingEl);
   }
 
-  private async createRoom(game: GameKind, mode: GameMode) {
+  private async createRoom(game: GameKind, mode: GameMode, privacy: RoomPrivacy) {
     saveProfile({ named: true });
     this.net.updateProfile();
     this.showLoading(`Setting the ${GAME_INFO[game].name} table…`);
     await this.net.ready();
-    const res = await this.net.call<{ code: string }>('create', { settings: { game, mode } });
+    const res = await this.net.call<{ code: string }>('create', { settings: { game, mode, privacy } });
     if (!res.ok) {
       toast(res.error, 'error');
       this.goHome();
@@ -518,6 +536,18 @@ class App {
     }
     this.roomCode = res.code;
     if (location.pathname !== `/room/${res.code}`) history.pushState(null, '', `/room/${res.code}`);
+  }
+
+  /** A private table picked in the list, with the code typed for it: the error, or null once in (the home screen stays up meanwhile). */
+  private async joinListed(listing: RoomListing, code: string, spectate: boolean): Promise<string | null> {
+    saveProfile({ named: true });
+    this.net.updateProfile();
+    await this.net.ready();
+    const res = await this.net.call<{ code: string }>('join', { code, spectate, listId: listing.id });
+    if (!res.ok) return res.error;
+    this.roomCode = res.code;
+    if (location.pathname !== `/room/${res.code}`) history.pushState(null, '', `/room/${res.code}`);
+    return null;
   }
 
   private enterRoomScreen() {
