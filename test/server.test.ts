@@ -437,16 +437,24 @@ describe('server', () => {
 
     // Profile changes reach the table; invalid fields are ignored.
     let version = a.room!.version;
-    b.socket.emit('profile', { name: 'Omar', color: 1, character: 'nejma', skin: 4, drink: 'coke' });
+    b.socket.emit('profile', { name: 'Omar', color: 1, character: 'nejma', skin: 4, drink: 'boga' });
     await a.waitFor(() => a.room!.version > version, 4000, 'new order');
-    expect(a.room!.seats[1]).toMatchObject({ character: 'nejma', skin: 4, drink: 'coke' });
+    expect(a.room!.seats[1]).toMatchObject({ character: 'nejma', skin: 4, drink: 'boga' });
     version = a.room!.version;
     b.socket.emit('profile', { name: 'Omar', character: 'dragon', skin: 99, drink: 'whisky', color: -3 } as never);
     await a.waitFor(() => a.room!.version > version, 4000, 'profile broadcast');
-    expect(a.room!.seats[1]).toMatchObject({ character: 'nejma', skin: 4, drink: 'coke' });
+    expect(a.room!.seats[1]).toMatchObject({ character: 'nejma', skin: 4, drink: 'boga' });
+    // An order the café no longer serves (from a profile saved before) gets what replaced it.
+    version = a.room!.version;
+    b.socket.emit('profile', { name: 'Omar', color: 1, character: 'nejma', skin: 4, drink: 'express' });
+    await a.waitFor(() => a.room!.version > version, 4000, 'express');
+    version = a.room!.version;
+    b.socket.emit('profile', { name: 'Omar', drink: 'coke' } as never);
+    await a.waitFor(() => a.room!.version > version, 4000, 'old order');
+    expect(a.room!.seats[1]).toMatchObject({ drink: 'boga' });
     // One of the crew, with their name.
     version = a.room!.version;
-    b.socket.emit('profile', { name: 'Gratos', color: 1, character: 'gratos', skin: 4, drink: 'coke' });
+    b.socket.emit('profile', { name: 'Gratos', color: 1, character: 'gratos', skin: 4, drink: 'boga' });
     await a.waitFor(() => a.room!.version > version, 4000, 'crew look');
     expect(a.room!.seats[1]).toMatchObject({ name: 'Gratos', character: 'gratos' });
 

@@ -114,7 +114,7 @@ export const DRINKS = [
   { id: 'express', name: 'Express', icon: '☕', order: 'Wa7ed express!' },
   { id: 'tea', name: 'Tea', icon: '🍵', order: 'Tay bel bondok!' },
   { id: 'chicha', name: 'Chicha', icon: '💨', order: 'Jibli chicha!' },
-  { id: 'coke', name: 'Coke', icon: '🥤', order: 'Wa7da Coca!' },
+  { id: 'boga', name: 'Boga', icon: '🥤', order: 'Wa7da Boga!' },
 ] as const;
 export type DrinkId = (typeof DRINKS)[number]['id'];
 
@@ -128,6 +128,15 @@ export function isCrew(v: unknown): v is CrewId {
 
 export function isDrink(v: unknown): v is DrinkId {
   return DRINKS.some((d) => d.id === v);
+}
+
+/** Drinks the café no longer serves, and what it pours instead (saved profiles may still order them). */
+const REPLACED_DRINKS: Record<string, DrinkId> = { coke: 'boga' };
+
+/** The drink a profile orders, or null if it names none the café serves or replaced. */
+export function drinkFrom(v: unknown): DrinkId | null {
+  if (isDrink(v)) return v;
+  return typeof v === 'string' && Object.hasOwn(REPLACED_DRINKS, v) ? REPLACED_DRINKS[v]! : null;
 }
 
 export function isSkin(v: unknown): v is number {
